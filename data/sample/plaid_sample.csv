@@ -1,0 +1,31 @@
+date,name,amount,category,account_id,pending
+2026-04-01,Rent,1200.00,Payment,acc_chk_001,false
+2026-04-02,Spotify,9.99,Entertainment,acc_chk_001,false
+2026-04-02,Starbucks,6.45,Food and Drink,acc_chk_001,false
+2026-04-03,Netflix,15.49,Entertainment,acc_chk_001,false
+2026-04-03,Trader Joe's,87.32,Shops,acc_chk_001,false
+2026-04-04,Employer Direct Deposit,-3200.00,Payroll,acc_chk_001,false
+2026-04-04,Uber Eats,24.67,Food and Drink,acc_chk_001,false
+2026-04-05,Amazon,34.99,Shops,acc_chk_001,false
+2026-04-05,Lyft,12.50,Travel,acc_chk_001,false
+2026-04-06,CVS Pharmacy,18.73,Health,acc_chk_001,false
+2026-04-07,Chipotle Mexican Grill,14.25,Food and Drink,acc_chk_001,false
+2026-04-07,Whole Foods Market,62.18,Shops,acc_chk_001,false
+2026-04-08,Adobe Creative Cloud,54.99,Service,acc_chk_001,false
+2026-04-08,LA Fitness,49.00,Recreation,acc_chk_001,false
+2026-04-09,Uber Eats,31.20,Food and Drink,acc_chk_001,false
+2026-04-10,Target,73.44,Shops,acc_chk_001,false
+2026-04-11,ConEd Electric,92.00,Utilities,acc_chk_001,false
+2026-04-12,McDonald's,8.93,Food and Drink,acc_chk_001,false
+2026-04-12,Walgreens,22.50,Health,acc_chk_001,false
+2026-04-13,Amazon,149.00,Shops,acc_chk_001,false
+2026-04-14,DoorDash,27.80,Food and Drink,acc_chk_001,false
+2026-04-14,Parking Garage 45th,15.00,Travel,acc_chk_001,false
+2026-04-15,Venmo,50.00,Transfer,acc_chk_001,false
+2026-04-16,OpenAI ChatGPT,20.00,Service,acc_chk_001,false
+2026-04-17,Trader Joe's,55.60,Shops,acc_chk_001,false
+2026-04-18,Uber,18.75,Travel,acc_chk_001,false
+2026-04-19,Grubhub,38.50,Food and Drink,acc_chk_001,false
+2026-04-20,Walmart,44.22,Shops,acc_chk_001,false
+2026-04-21,Hulu,17.99,Entertainment,acc_chk_001,false
+2026-04-22,Water Utility,35.00,Utilities,acc_chk_001,false
