@@ -317,7 +317,7 @@ def _render_markdown(stats, patterns, drift, narrative, run_id) -> None:
 
 @app.command()
 def analyze(
-    file: Annotated[Path, typer.Argument(help="CSV transaction file to analyze.")] = Path(""),
+    file: Annotated[Optional[Path], typer.Argument(help="CSV transaction file to analyze.")] = None,
     fmt: Annotated[
         str, typer.Option("--format", "-f", help="Parser: auto|chase|bofa|plaid|generic")
     ] = "auto",
@@ -332,12 +332,12 @@ def analyze(
     """Analyze a bank transaction CSV and generate insights."""
     _load_env()
 
-    if not file or not file.exists():
-        # Try sample data
+    if file is None or not file.exists():
         sample = Path(__file__).parent.parent / "data" / "sample" / "chase_sample.csv"
-        if sample.exists() and (not file or str(file) == ""):
+        if sample.exists():
             console.print(f"[info]No file specified — using sample data: {sample}[/info]")
             file = sample
+            period = 9999  # sample data is historical; skip date filter
         else:
             console.print(f"[expense]File not found: {file}[/expense]")
             raise typer.Exit(1)

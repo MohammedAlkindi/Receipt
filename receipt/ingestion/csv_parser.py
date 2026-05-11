@@ -11,6 +11,8 @@ import pandas as pd
 
 from receipt.ingestion.base import ParseError, TransactionParser
 
+MAX_ROWS = 50_000
+
 # Known column name variants for fuzzy matching
 _DATE_VARIANTS = {"date", "transaction date", "posted date", "trans date", "post date"}
 _DESC_VARIANTS = {"description", "memo", "details", "payee", "merchant", "name", "transaction"}
@@ -86,13 +88,21 @@ class GenericCSVParser(TransactionParser):
         for enc in encodings:
             try:
                 if isinstance(source, (str, Path)):
-                    return pd.read_csv(source, encoding=enc, thousands=",")
-                source.seek(0)
-                return pd.read_csv(source, encoding=enc, thousands=",")
+                    df = pd.read_csv(source, encoding=enc, thousands=",")
+                else:
+                    source.seek(0)
+                    df = pd.read_csv(source, encoding=enc, thousands=",")
             except UnicodeDecodeError:
                 continue
             except Exception as exc:
                 raise ParseError(f"Failed to read CSV: {exc}") from exc
+
+            if len(df) > MAX_ROWS:
+                raise ParseError(
+                    f"File has {len(df)} rows. Maximum supported is {MAX_ROWS}. "
+                    "Split your file into smaller chunks."
+                )
+            return df
         raise ParseError("Cannot decode file — tried utf-8, latin-1, cp1252.")
 
     @staticmethod

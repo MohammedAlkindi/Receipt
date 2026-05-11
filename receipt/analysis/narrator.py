@@ -142,10 +142,24 @@ class Narrator:
         drift: DriftReport | None = None,
     ) -> NarrativeReport:
         client = anthropic.Anthropic(api_key=self._api_key)
-        user_content = _build_prompt(stats, patterns, drift)
+        base_content = _build_prompt(stats, patterns, drift)
 
         last_exc: Exception | None = None
+        malformed_text: str | None = None
+
         for attempt in range(self.MAX_RETRIES):
+            if malformed_text is not None:
+                user_content = (
+                    "IMPORTANT: Your previous response was not valid JSON. "
+                    "Return ONLY the raw JSON object. No markdown fences, no backticks, "
+                    "no explanation before or after the JSON.\n\n"
+                    f"Your previous (invalid) response was:\n{malformed_text}\n\n"
+                    f"Now generate the correct JSON for this data:\n\n{base_content}"
+                )
+            else:
+                user_content = base_content
+
+            raw_text: str = ""
             try:
                 response = client.messages.create(
                     model=self.MODEL,
@@ -165,11 +179,14 @@ class Narrator:
                     next_steps=data.get("next_steps", ""),
                 )
             except json.JSONDecodeError as exc:
+                logger.debug("Malformed JSON response (attempt %d): %s", attempt + 1, raw_text)
                 logger.warning("JSON parse error on attempt %d: %s", attempt + 1, exc)
+                malformed_text = raw_text
                 last_exc = exc
             except Exception as exc:
                 logger.warning("API error on attempt %d: %s", attempt + 1, exc)
                 last_exc = exc
+                malformed_text = None
                 if attempt < self.MAX_RETRIES - 1:
                     time.sleep(2 ** attempt)
 

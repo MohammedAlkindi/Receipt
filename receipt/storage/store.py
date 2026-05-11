@@ -33,37 +33,51 @@ class ReceiptStore:
         """Upsert transactions from *df* and associate them with *run_id*.
 
         Returns number of new rows written (skips duplicates by transaction_id).
+        Bulk-fetches existing IDs in one query, then batch-inserts new rows.
         """
-        saved = 0
+        if df.empty:
+            return 0
+
+        all_ids = df["transaction_id"].astype(str).tolist()
+
         with Session(self._engine) as session:
-            for _, row in df.iterrows():
-                existing = session.execute(
-                    select(Transaction).where(
-                        Transaction.transaction_id == str(row["transaction_id"])
+            existing_ids: set[str] = set(
+                session.execute(
+                    select(Transaction.transaction_id).where(
+                        Transaction.transaction_id.in_(all_ids)
                     )
-                ).scalar_one_or_none()
-                if existing:
-                    continue
-                t = Transaction(
-                    transaction_id=str(row["transaction_id"]),
-                    date=_to_utc_datetime(row["date"]),
-                    description=str(row.get("description", "")),
-                    raw_description=str(row.get("raw_description", "")),
-                    amount=float(row["amount"]),
-                    source=str(row.get("source", "unknown")),
-                    category=str(row["category"]) if "category" in row and pd.notna(row["category"]) else None,
-                    category_confidence=float(row["category_confidence"]) if "category_confidence" in row else None,
-                    cluster_id=int(row["cluster_id"]) if "cluster_id" in row and pd.notna(row["cluster_id"]) else None,
-                    anomaly_score=float(row["anomaly_score"]) if "anomaly_score" in row else None,
-                    is_anomaly=bool(row["is_anomaly"]) if "is_anomaly" in row else False,
-                    is_weekend=bool(row["is_weekend"]) if "is_weekend" in row else None,
-                    day_of_week=str(row["day_of_week"]) if "day_of_week" in row else None,
-                    run_id=run_id,
-                )
-                session.add(t)
-                saved += 1
+                ).scalars().all()
+            )
+
+            new_df = df[~df["transaction_id"].astype(str).isin(existing_ids)]
+            if new_df.empty:
+                return 0
+
+            cols = set(new_df.columns)
+            mappings = [
+                {
+                    "transaction_id": str(row["transaction_id"]),
+                    "date": _to_utc_datetime(row["date"]),
+                    "description": str(row.get("description", "")),
+                    "raw_description": str(row.get("raw_description", "")),
+                    "amount": float(row["amount"]),
+                    "source": str(row.get("source", "unknown")),
+                    "category": str(row["category"]) if "category" in cols and pd.notna(row["category"]) else None,
+                    "category_confidence": float(row["category_confidence"]) if "category_confidence" in cols else None,
+                    "cluster_id": int(row["cluster_id"]) if "cluster_id" in cols and pd.notna(row["cluster_id"]) else None,
+                    "anomaly_score": float(row["anomaly_score"]) if "anomaly_score" in cols else None,
+                    "is_anomaly": bool(row["is_anomaly"]) if "is_anomaly" in cols else False,
+                    "is_weekend": bool(row["is_weekend"]) if "is_weekend" in cols else None,
+                    "day_of_week": str(row["day_of_week"]) if "day_of_week" in cols else None,
+                    "run_id": run_id,
+                }
+                for _, row in new_df.iterrows()
+            ]
+
+            session.bulk_insert_mappings(Transaction, mappings)
             session.commit()
-        return saved
+
+        return len(mappings)
 
     def get_transactions(
         self,

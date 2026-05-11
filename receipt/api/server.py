@@ -9,9 +9,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from fastapi import FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from receipt import configure_logging
+
+configure_logging()
 
 app = FastAPI(
     title="receipt API",
@@ -27,6 +32,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_RECEIPT_TOKEN: str | None = os.getenv("RECEIPT_API_TOKEN")
+_MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next: Any) -> Any:
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > _MAX_BODY_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": "Request body too large. Maximum 10MB."},
+        )
+    return await call_next(request)
+
+
+def _require_receipt_token(x_receipt_token: Optional[str] = Header(None)) -> None:
+    if _RECEIPT_TOKEN and x_receipt_token != _RECEIPT_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing X-Receipt-Token.",
+        )
 
 
 # ---------------------------------------------------------------------------
