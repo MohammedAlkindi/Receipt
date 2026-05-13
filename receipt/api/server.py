@@ -6,9 +6,11 @@ import base64
 import io
 import os
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
+import anyio
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -16,7 +18,12 @@ from pydantic import BaseModel
 
 from receipt import configure_logging
 
-configure_logging()
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):  # type: ignore[type-arg]
+    configure_logging()
+    yield
+
 
 app = FastAPI(
     title="receipt API",
@@ -24,6 +31,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -38,7 +46,7 @@ _MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 @app.middleware("http")
-async def limit_body_size(request: Request, call_next: Any) -> Any:
+async def limit_body_size(request: Request, call_next: Callable[..., Any]) -> Any:
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > _MAX_BODY_BYTES:
         return JSONResponse(
@@ -110,7 +118,12 @@ async def health() -> dict[str, Any]:
     except Exception as exc:
         db_stats = {}
         status_val = f"degraded: {exc}"
-    return {"status": status_val, "db": db_stats, "version": "0.1.0"}
+    return {
+        "status": status_val,
+        "db": db_stats,
+        "version": "0.1.0",
+        "narrative_service": "unknown",
+    }
 
 
 @app.post("/analyze", response_model=AnalyzeResponse, tags=["analysis"])
@@ -123,6 +136,12 @@ async def analyze(
         csv_bytes = base64.b64decode(request.file_content)
     except Exception:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid base64 content.")
+
+    if not x_api_key.startswith("sk-ant-"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid API key format. Anthropic keys must begin with 'sk-ant-'.",
+        )
 
     csv_io = io.StringIO(csv_bytes.decode("utf-8-sig", errors="replace"))
 
@@ -170,7 +189,7 @@ async def analyze(
             detail=f"No transactions found in the last {request.period} days.",
         )
 
-    # Pipeline
+    # Pipeline — all blocking calls offloaded to a thread pool
     from receipt.pipeline.cleaner import normalize_descriptions, deduplicate, normalize_dates
     from receipt.pipeline.categorizer import SemanticCategorizer
     from receipt.pipeline.aggregator import compute_stats
@@ -178,14 +197,16 @@ async def analyze(
     from receipt.analysis.anomalies import AnomalyDetector
     from receipt.analysis.narrator import Narrator
 
-    df = normalize_descriptions(df)
-    df = deduplicate(df)
-    df = normalize_dates(df)
-    df = SemanticCategorizer().categorize(df)
-    df = AnomalyDetector().fit_predict(df)
+    _df = [df]
+    _df[0] = await anyio.to_thread.run_sync(lambda: normalize_descriptions(_df[0]))
+    _df[0] = await anyio.to_thread.run_sync(lambda: deduplicate(_df[0]))
+    _df[0] = await anyio.to_thread.run_sync(lambda: normalize_dates(_df[0]))
+    _df[0] = await anyio.to_thread.run_sync(lambda: SemanticCategorizer().categorize(_df[0]))
+    _df[0] = await anyio.to_thread.run_sync(lambda: AnomalyDetector().fit_predict(_df[0]))
+    df = _df[0]
 
-    stats = compute_stats(df)
-    patterns = detect_patterns(df)
+    stats = await anyio.to_thread.run_sync(lambda: compute_stats(df))
+    patterns = await anyio.to_thread.run_sync(lambda: detect_patterns(df))
 
     # Narrative
     narrator = Narrator(api_key=x_api_key)
@@ -238,7 +259,7 @@ async def get_history() -> list[dict[str, Any]]:
     from receipt.storage.store import ReceiptStore
 
     store = ReceiptStore()
-    return store.get_analysis_history()
+    return await anyio.to_thread.run_sync(lambda: store.get_analysis_history())
 
 
 @app.get("/history/{run_id}", tags=["history"])
@@ -259,4 +280,4 @@ async def get_merchants(limit: int = 30) -> list[dict[str, Any]]:
     from receipt.storage.store import ReceiptStore
 
     store = ReceiptStore()
-    return store.get_merchants(limit=limit)
+    return await anyio.to_thread.run_sync(lambda: store.get_merchants(limit=limit))

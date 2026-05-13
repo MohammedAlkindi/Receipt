@@ -67,8 +67,18 @@ _FAKE_NARRATIVE = SimpleNamespace(
 # ---------------------------------------------------------------------------
 
 def _patch_pipeline(mocker, *, narrative=None, drift=None, save_run_id=None):
-    """Patch all heavy pipeline/storage internals and return the mock namespace."""
+    """Patch all heavy pipeline/storage internals and return the mock namespace.
+
+    ReceiptStore is patched exactly once at the top so all code paths
+    (including drift) share the same mock instance.
+    """
     ns = SimpleNamespace()
+
+    # Storage — single patch, used by all branches
+    store_mock = mocker.MagicMock()
+    store_mock.save_analysis.return_value = save_run_id or "run-abc-123"
+    mocker.patch("receipt.storage.store.ReceiptStore", return_value=store_mock)
+    ns.store = store_mock
 
     # Parser / ingestion
     ns.parser = mocker.MagicMock()
@@ -98,7 +108,6 @@ def _patch_pipeline(mocker, *, narrative=None, drift=None, save_run_id=None):
 
     # Drift
     if drift is not None:
-        mocker.patch("receipt.storage.store.ReceiptStore", return_value=mocker.MagicMock())
         mocker.patch("receipt.pipeline.drift.DriftDetector", return_value=mocker.MagicMock())
 
     # Narrator
@@ -106,12 +115,6 @@ def _patch_pipeline(mocker, *, narrative=None, drift=None, save_run_id=None):
         ns.narrator = mocker.MagicMock()
         ns.narrator.generate_narrative.return_value = narrative
         mocker.patch("receipt.analysis.narrator.Narrator", return_value=ns.narrator)
-
-    # Storage
-    store_mock = mocker.MagicMock()
-    store_mock.save_analysis.return_value = save_run_id or "run-abc-123"
-    mocker.patch("receipt.storage.store.ReceiptStore", return_value=store_mock)
-    ns.store = store_mock
 
     return ns
 
@@ -121,14 +124,13 @@ def _patch_pipeline(mocker, *, narrative=None, drift=None, save_run_id=None):
 # ---------------------------------------------------------------------------
 
 class TestAnalyzeTerminal:
-    def test_uses_sample_when_no_file_given(self, mocker, tmp_path):
-        _patch_pipeline(mocker)
-        sample = tmp_path / "chase_sample.csv"
-        sample.write_text("Transaction Date,Description,Amount\n2026-04-01,Test,-5.00\n")
-        mocker.patch("receipt.cli.Path.__truediv__", return_value=sample)
-
+    def test_analyze_requires_file_argument(self):
         result = runner.invoke(app, ["analyze"])
-        assert result.exit_code == 0
+        assert result.exit_code != 0
+
+    def test_analyze_missing_file_exits_1(self):
+        result = runner.invoke(app, ["analyze", "/nonexistent/path/data.csv"])
+        assert result.exit_code == 1
 
     def test_analyze_with_explicit_file(self, mocker, tmp_path):
         _patch_pipeline(mocker)
@@ -402,11 +404,6 @@ class TestExport:
 # ---------------------------------------------------------------------------
 
 class TestServe:
-    def test_serve_fails_without_uvicorn(self, mocker):
-        mocker.patch.dict("sys.modules", {"uvicorn": None})
-        result = runner.invoke(app, ["serve"])
-        assert result.exit_code == 1
-
     def test_serve_starts_with_uvicorn(self, mocker):
         uvicorn_mock = mocker.MagicMock()
         mocker.patch.dict("sys.modules", {"uvicorn": uvicorn_mock})

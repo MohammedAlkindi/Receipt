@@ -1,4 +1,10 @@
-"""Spending aggregation and statistical summaries."""
+"""Spending aggregation and statistical summaries.
+
+NOTE: by_category intentionally omits raw transaction lists.
+Transaction-level detail grows O(N) with dataset size and is never
+used by the narrator, API response, or storage layer.
+Use get_transactions() from ReceiptStore for transaction-level queries.
+"""
 
 from __future__ import annotations
 
@@ -25,9 +31,6 @@ def compute_stats(df: pd.DataFrame) -> dict[str, Any]:
                 "total": float(amounts.sum()),
                 "count": int(len(group)),
                 "avg": float(amounts.mean()),
-                "transactions": group[["date", "description", "amount"]]
-                .assign(amount=lambda x: x["amount"])
-                .to_dict(orient="records"),
             }
 
     # --- By week ---

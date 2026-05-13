@@ -317,7 +317,7 @@ def _render_markdown(stats, patterns, drift, narrative, run_id) -> None:
 
 @app.command()
 def analyze(
-    file: Annotated[Optional[Path], typer.Argument(help="CSV transaction file to analyze.")] = None,
+    file: Annotated[Path, typer.Argument(help="CSV transaction file to analyze.")],
     fmt: Annotated[
         str, typer.Option("--format", "-f", help="Parser: auto|chase|bofa|plaid|generic")
     ] = "auto",
@@ -332,21 +332,61 @@ def analyze(
     """Analyze a bank transaction CSV and generate insights."""
     _load_env()
 
-    if file is None or not file.exists():
-        sample = Path(__file__).parent.parent / "data" / "sample" / "chase_sample.csv"
-        if sample.exists():
-            console.print(f"[info]No file specified — using sample data: {sample}[/info]")
-            file = sample
-            period = 9999  # sample data is historical; skip date filter
-        else:
-            console.print(f"[expense]File not found: {file}[/expense]")
-            raise typer.Exit(1)
+    if not file.exists():
+        console.print(
+            f"[expense]File not found: {file}. "
+            "Run `receipt demo` to try sample data, or provide "
+            "a CSV path: receipt analyze <path/to/transactions.csv>[/expense]"
+        )
+        raise typer.Exit(1)
 
     if fmt not in ("auto", "chase", "bofa", "plaid", "generic"):
         console.print(f"[expense]Unknown format: {fmt}. Use auto|chase|bofa|plaid|generic[/expense]")
         raise typer.Exit(1)
 
     _run_pipeline(file, fmt, period, compare, save, api_key, output)
+
+
+@app.command()
+def demo() -> None:
+    """Run the full pipeline on the bundled Chase sample (no API key needed)."""
+    _load_env()
+    from receipt import configure_logging
+
+    configure_logging()
+
+    sample = Path(__file__).parent.parent / "data" / "sample" / "chase_sample.csv"
+    if not sample.exists():
+        console.print("[expense]Sample data not found. Is the repo complete?[/expense]")
+        raise typer.Exit(1)
+
+    console.print(
+        "[info]Demo mode: analyzing bundled Chase sample data "
+        "(30 transactions, April 2026)[/info]"
+    )
+    console.print("[info]Embeddings disabled for speed. No API key needed.[/info]\n")
+
+    from receipt.ingestion.chase import ChaseParser
+    from receipt.pipeline.cleaner import normalize_descriptions, deduplicate, normalize_dates
+    from receipt.pipeline.categorizer import SemanticCategorizer
+    from receipt.pipeline.aggregator import compute_stats
+    from receipt.analysis.patterns import detect_patterns
+    from receipt.analysis.anomalies import AnomalyDetector
+
+    df = ChaseParser().parse(sample)
+    df = normalize_descriptions(df)
+    df = deduplicate(df)
+    df = normalize_dates(df)
+    df = SemanticCategorizer(use_embeddings=False).categorize(df)
+    df = AnomalyDetector().fit_predict(df)
+    stats = compute_stats(df)
+    patterns = detect_patterns(df)
+
+    _render_terminal(stats, patterns, None, None, None, len(df))
+    console.print(
+        "\n[info]To analyze your own transactions: "
+        "receipt analyze <path/to/transactions.csv>[/info]"
+    )
 
 
 @app.command()

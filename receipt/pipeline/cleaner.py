@@ -70,30 +70,21 @@ def normalize_descriptions(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def deduplicate(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove exact duplicates by transaction_id; flag near-duplicates."""
+    """Remove exact duplicates by transaction_id and vectorized near-duplicates."""
     df = df.copy()
 
     # Exact deduplication
     df = df.drop_duplicates(subset=["transaction_id"], keep="first")
-
-    # Near-duplicate detection: same merchant + same amount within 2 days
     df = df.sort_values("date").reset_index(drop=True)
-    df["_near_dup"] = False
 
-    for idx, row in df.iterrows():
-        if df.at[idx, "_near_dup"]:
-            continue
-        window = df[
-            (df["description"] == row["description"])
-            & (df["amount"] == row["amount"])
-            & (df["date"] >= row["date"])
-            & (df["date"] <= row["date"] + pd.Timedelta(days=2))
-            & (df.index != idx)
-        ]
-        if not window.empty:
-            df.loc[window.index, "_near_dup"] = True
+    # Vectorized near-duplicate detection: within each (description, amount) group,
+    # flag any row that falls within 2 days of the previous occurrence.
+    df["_key"] = df["description"] + "|" + df["amount"].astype(str)
+    df["_prev_date"] = df.groupby("_key")["date"].shift(1)
+    df["_gap"] = (df["date"] - df["_prev_date"]).dt.total_seconds() / 86400
+    near_dup_mask = df["_gap"].notna() & (df["_gap"] >= 0) & (df["_gap"] <= 2)
+    df = df[~near_dup_mask].drop(columns=["_key", "_prev_date", "_gap"])
 
-    df = df[~df["_near_dup"]].drop(columns=["_near_dup"])
     return df.reset_index(drop=True)
 
 

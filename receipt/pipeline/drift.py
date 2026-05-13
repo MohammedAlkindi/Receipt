@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -42,10 +45,23 @@ class DriftDetector:
     ) -> DriftReport:
         report = DriftReport()
 
+        skip_category_drift = False
+        if "category" not in df_current.columns or "category" not in df_previous.columns:
+            logger.warning(
+                "DriftDetector.compare_periods: 'category' column missing. "
+                "Call SemanticCategorizer.categorize() before drift detection. "
+                "Category drift analysis will be skipped."
+            )
+            skip_category_drift = True
+
         # --- Category drift ---
-        cat_curr = self._category_totals(df_current)
-        cat_prev = self._category_totals(df_previous)
-        all_cats = set(cat_curr) | set(cat_prev)
+        if not skip_category_drift:
+            cat_curr = self._category_totals(df_current)
+            cat_prev = self._category_totals(df_previous)
+            all_cats = set(cat_curr) | set(cat_prev)
+        else:
+            cat_curr = cat_prev = {}
+            all_cats = set()
 
         for cat in all_cats:
             curr_val = cat_curr.get(cat, 0.0)

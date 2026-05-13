@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 
 from receipt.storage.models import AnalysisRun, Base, Merchant, Transaction
@@ -198,7 +198,11 @@ class ReceiptStore:
     # ------------------------------------------------------------------
 
     def upsert_merchants(self, df: pd.DataFrame) -> None:
-        """Update merchant summary table from a categorized transaction DataFrame."""
+        """Update merchant summary table from a categorized transaction DataFrame.
+
+        Bulk-fetches all existing normalized_names in one query, then batch-inserts
+        new merchants and issues targeted UPDATE statements only for those that exist.
+        """
         expenses = df[df["amount"] < 0].copy()
         if expenses.empty:
             return
@@ -216,27 +220,47 @@ class ReceiptStore:
             cat_map = expenses.groupby("description")["category"].first().to_dict()
             grouped["category"] = grouped["description"].map(cat_map)
 
+        norm_names = [str(r["description"]).lower().strip() for _, r in grouped.iterrows()]
+
         with Session(self._engine) as session:
+            existing_rows = session.execute(
+                select(Merchant).where(Merchant.normalized_name.in_(norm_names))
+            ).scalars().all()
+            existing_map: dict[str, Merchant] = {m.normalized_name: m for m in existing_rows}
+
+            new_mappings: list[dict] = []
             for _, row in grouped.iterrows():
                 norm = str(row["description"]).lower().strip()
-                existing = session.execute(
-                    select(Merchant).where(Merchant.normalized_name == norm)
-                ).scalar_one_or_none()
-                if existing:
-                    existing.total_spent = float(existing.total_spent) + float(row["total"])
-                    existing.transaction_count = int(existing.transaction_count) + int(row["count"])
-                    existing.last_seen = _to_utc_datetime(row["last_seen"])
-                else:
-                    m = Merchant(
-                        name=str(row["description"]),
-                        normalized_name=norm,
-                        category=str(row["category"]) if "category" in row else None,
-                        first_seen=_to_utc_datetime(row["first_seen"]),
-                        last_seen=_to_utc_datetime(row["last_seen"]),
-                        total_spent=float(row["total"]),
-                        transaction_count=int(row["count"]),
+                has_cat = "category" in grouped.columns
+                cat_val = (
+                    str(row["category"]) if has_cat and pd.notna(row["category"]) else None
+                )
+                if norm in existing_map:
+                    m = existing_map[norm]
+                    session.execute(
+                        update(Merchant)
+                        .where(Merchant.normalized_name == norm)
+                        .values(
+                            total_spent=float(m.total_spent) + float(row["total"]),
+                            transaction_count=int(m.transaction_count) + int(row["count"]),
+                            last_seen=_to_utc_datetime(row["last_seen"]),
+                        )
                     )
-                    session.add(m)
+                else:
+                    new_mappings.append(
+                        {
+                            "name": str(row["description"]),
+                            "normalized_name": norm,
+                            "category": cat_val,
+                            "first_seen": _to_utc_datetime(row["first_seen"]),
+                            "last_seen": _to_utc_datetime(row["last_seen"]),
+                            "total_spent": float(row["total"]),
+                            "transaction_count": int(row["count"]),
+                        }
+                    )
+
+            if new_mappings:
+                session.bulk_insert_mappings(Merchant, new_mappings)
             session.commit()
 
     def get_merchants(self, limit: int = 50) -> list[dict[str, Any]]:

@@ -49,6 +49,9 @@ CSV file / base64 payload
 # Clone and install in editable mode
 git clone https://github.com/alkindymhmd/receipt
 cd receipt
+pip install -e .
+
+# For development tools (pytest, ruff, mypy)
 pip install -e ".[dev]"
 
 # Copy and fill in your API key
@@ -58,13 +61,19 @@ cp .env.example .env
 
 > **Python ≥ 3.11 required.**
 
+> **Note:** The first run downloads the `all-MiniLM-L6-v2` sentence-transformers model (~80 MB).
+> Use `receipt demo` or pass `use_embeddings=False` to skip this download.
+
 ---
 
 ## Quick Start
 
 ```bash
-# Analyse the bundled Chase sample (no API key needed — skips narrative)
-receipt analyze
+# Step 1: install (required before any receipt command works)
+pip install -e .
+
+# Try the bundled Chase sample — no API key, no model download
+receipt demo
 
 # Analyse your own file with auto-detection
 receipt analyze ~/Downloads/chase_activity.csv
@@ -107,7 +116,15 @@ Expected terminal output (excerpt):
 
 ## CLI Reference
 
-### `receipt analyze [FILE] [OPTIONS]`
+### `receipt demo`
+
+Run the full pipeline on the bundled Chase sample (30 transactions, April 2026). No API key or internet connection required — embeddings are disabled for speed.
+
+```bash
+receipt demo
+```
+
+### `receipt analyze <FILE> [OPTIONS]`
 
 | Option | Default | Description |
 |---|---|---|
@@ -202,7 +219,7 @@ curl http://localhost:8000/merchants | jq '.[0:5]'
 
 ```bash
 curl http://localhost:8000/health
-# {"status": "ok", "db": {"transactions": 29, "analysis_runs": 1, "merchants": 18}}
+# {"status": "ok", "db": {"transactions": 29, "analysis_runs": 1, "merchants": 18}, "narrative_service": "unknown"}
 ```
 
 ---
@@ -311,11 +328,43 @@ pytest --cov=receipt --cov-report=term-missing
 # Run a single module
 pytest tests/test_ingestion.py -v
 
-# Skip slow embedding tests
+# Skip slow embedding tests (avoids ~80MB model download in CI)
 pytest -k "not embedding"
 ```
 
 Tests use the sample CSVs in `data/sample/` as fixtures and do **not** require an Anthropic API key — the narrator tests mock the API call.
+
+---
+
+## Troubleshooting
+
+**`receipt` command not found after installation**
+
+Ensure your Python `Scripts` directory is in `PATH`, or invoke the CLI directly:
+
+```bash
+python -m receipt.cli --help
+```
+
+On Windows, the Scripts directory is typically `%APPDATA%\Python\PythonXY\Scripts`. On macOS/Linux it is `~/.local/bin` (user install) or inside your virtualenv's `bin/`.
+
+**First run is slow / downloads a large file**
+
+`receipt analyze` downloads the `all-MiniLM-L6-v2` model (~80 MB) on first use. Use `receipt demo` to skip the download entirely, or set `use_embeddings=False` in the categorizer for local testing.
+
+**Narrative generation times out**
+
+The Anthropic API call has a 30-second timeout. If your network is slow or the API is degraded, you will see a `502` from the server or a warning in the CLI. Check `https://status.anthropic.com` and retry.
+
+---
+
+## Known Limitations
+
+- **Max 50,000 transactions per file** — the generic CSV parser enforces this guard to prevent memory exhaustion.
+- **sentence-transformers requires ~80 MB download on first run** — use `SemanticCategorizer(use_embeddings=False)` or `receipt demo` to skip.
+- **HDBSCAN clusters are most meaningful on 200+ transactions** — on smaller datasets the keyword fallback produces better category labels.
+- **FastAPI server is single-process** — for concurrent use, run with multiple workers: `uvicorn receipt.api.server:app --workers 4` (requires `gunicorn` as process manager on Linux/macOS).
+- **No database migration system** — schema changes require deleting `~/.receipt/receipt.db` and re-running analyses.
 
 ---
 

@@ -131,6 +131,7 @@ class Narrator:
     MODEL = "claude-sonnet-4-20250514"
     MAX_TOKENS = 2000
     MAX_RETRIES = 3
+    API_TIMEOUT = 30.0
 
     def __init__(self, api_key: str):
         self._api_key = api_key
@@ -166,6 +167,7 @@ class Narrator:
                     max_tokens=self.MAX_TOKENS,
                     system=_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": user_content}],
+                    timeout=self.API_TIMEOUT,
                 )
                 raw_text = response.content[0].text
                 data = json.loads(raw_text)
