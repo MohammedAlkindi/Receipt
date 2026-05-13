@@ -7,12 +7,12 @@ from pathlib import Path
 
 def test_full_pipeline_no_api(tmp_path: Path) -> None:
     """Run Chase sample through every layer except narrative generation."""
-    from receipt.ingestion.chase import ChaseParser
-    from receipt.pipeline.cleaner import normalize_descriptions, deduplicate, normalize_dates
-    from receipt.pipeline.categorizer import SemanticCategorizer
-    from receipt.pipeline.aggregator import compute_stats
-    from receipt.analysis.patterns import detect_patterns
     from receipt.analysis.anomalies import AnomalyDetector
+    from receipt.analysis.patterns import detect_patterns
+    from receipt.ingestion.chase import ChaseParser
+    from receipt.pipeline.aggregator import compute_stats
+    from receipt.pipeline.categorizer import SemanticCategorizer
+    from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
     from receipt.storage.store import ReceiptStore
 
     sample = Path(__file__).parent.parent / "data" / "sample" / "chase_sample.csv"
@@ -31,6 +31,7 @@ def test_full_pipeline_no_api(tmp_path: Path) -> None:
     # Analysis
     stats = compute_stats(df)
     patterns = detect_patterns(df)
+    assert isinstance(patterns, list)
     assert stats["total_spent"] < 0
     assert stats["total_income"] > 0
     assert "by_category" in stats

@@ -75,7 +75,7 @@ class AnomalyDetector:
             model = IsolationForest(
                 contamination=self.contamination, random_state=42, n_estimators=100
             )
-            raw = model.fit_predict(X)
+            model.fit(X)
             # IsolationForest returns -1 for anomalies; convert to [0, 1] score
             decision = model.decision_function(X)
             scores = -decision  # higher = more anomalous

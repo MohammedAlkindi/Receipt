@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from receipt.ingestion.base import TransactionParser, ParseError
-from receipt.ingestion.csv_parser import GenericCSVParser
-from receipt.ingestion.chase import ChaseParser
+from receipt.ingestion.base import ParseError, TransactionParser
 from receipt.ingestion.bofa import BofAParser
+from receipt.ingestion.chase import ChaseParser
+from receipt.ingestion.csv_parser import GenericCSVParser
 from receipt.ingestion.plaid import PlaidParser
 
 

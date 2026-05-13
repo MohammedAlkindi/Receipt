@@ -1,8 +1,8 @@
 """Analysis layer — pattern detection, anomalies, narrative generation."""
 
-from receipt.analysis.patterns import detect_patterns, Pattern
 from receipt.analysis.anomalies import AnomalyDetector
-from receipt.analysis.narrator import Narrator, NarrativeReport
+from receipt.analysis.narrator import NarrativeReport, Narrator
+from receipt.analysis.patterns import Pattern, detect_patterns
 
 __all__ = [
     "detect_patterns",

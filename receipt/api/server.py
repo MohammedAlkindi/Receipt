@@ -5,13 +5,12 @@ from __future__ import annotations
 import base64
 import io
 import os
-import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 import anyio
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -146,11 +145,10 @@ async def analyze(
     csv_io = io.StringIO(csv_bytes.decode("utf-8-sig", errors="replace"))
 
     # Ingest
-    from receipt.ingestion import detect_parser
-    from receipt.ingestion.chase import ChaseParser
     from receipt.ingestion.bofa import BofAParser
-    from receipt.ingestion.plaid import PlaidParser
+    from receipt.ingestion.chase import ChaseParser
     from receipt.ingestion.csv_parser import GenericCSVParser
+    from receipt.ingestion.plaid import PlaidParser
 
     parser_map = {
         "chase": ChaseParser,
@@ -164,8 +162,6 @@ async def analyze(
             import pandas as pd
 
             sample = pd.read_csv(io.StringIO(csv_bytes.decode("utf-8-sig", errors="replace")), nrows=5)
-            from receipt.ingestion.base import ParseError
-
             for cls in (ChaseParser, BofAParser, PlaidParser):
                 if cls.detect(sample):
                     parser = cls()
@@ -190,12 +186,12 @@ async def analyze(
         )
 
     # Pipeline — all blocking calls offloaded to a thread pool
-    from receipt.pipeline.cleaner import normalize_descriptions, deduplicate, normalize_dates
-    from receipt.pipeline.categorizer import SemanticCategorizer
-    from receipt.pipeline.aggregator import compute_stats
-    from receipt.analysis.patterns import detect_patterns
     from receipt.analysis.anomalies import AnomalyDetector
     from receipt.analysis.narrator import Narrator
+    from receipt.analysis.patterns import detect_patterns
+    from receipt.pipeline.aggregator import compute_stats
+    from receipt.pipeline.categorizer import SemanticCategorizer
+    from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
 
     _df = [df]
     _df[0] = await anyio.to_thread.run_sync(lambda: normalize_descriptions(_df[0]))

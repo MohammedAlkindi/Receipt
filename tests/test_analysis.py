@@ -5,18 +5,16 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 from receipt.analysis.anomalies import AnomalyDetector
 from receipt.analysis.patterns import (
     Pattern,
-    detect_patterns,
     _anomalous_week,
     _late_night_spending,
     _subscription_creep,
     _weekend_splurge,
+    detect_patterns,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -158,7 +156,7 @@ class TestAnomalyDetector:
 
 class TestNarrator:
     def test_generates_report(self, sample_df):
-        from receipt.analysis.narrator import Narrator, NarrativeReport
+        from receipt.analysis.narrator import NarrativeReport, Narrator
         from receipt.pipeline.aggregator import compute_stats
 
         stats = compute_stats(sample_df)

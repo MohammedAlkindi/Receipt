@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
-from rich import print as rprint
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -50,9 +48,9 @@ def _load_env() -> None:
         pass
 
 
-def _get_api_key(api_key: str | None) -> str:
+def _get_api_key(api_key: str | None, verbose: bool = True) -> str:
     key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-    if not key:
+    if not key and verbose:
         console.print("[warning]No Anthropic API key — narrative generation will be skipped.[/warning]")
     return key
 
@@ -67,21 +65,23 @@ def _run_pipeline(
     output: str,
 ) -> None:
     _load_env()
-    resolved_key = _get_api_key(api_key)
+    _verbose = output == "terminal"
+    resolved_key = _get_api_key(api_key, verbose=_verbose)
+    _progress_console = console if _verbose else Console(quiet=True)
 
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
-        console=console,
+        console=_progress_console,
         transient=True,
     ) as progress:
         # --- Ingest ---
         task = progress.add_task("Detecting parser…", total=None)
         from receipt.ingestion import detect_parser
-        from receipt.ingestion.chase import ChaseParser
         from receipt.ingestion.bofa import BofAParser
-        from receipt.ingestion.plaid import PlaidParser
+        from receipt.ingestion.chase import ChaseParser
         from receipt.ingestion.csv_parser import GenericCSVParser
+        from receipt.ingestion.plaid import PlaidParser
 
         parser_map = {
             "chase": ChaseParser,
@@ -102,12 +102,13 @@ def _run_pipeline(
         df = df[df["date"] >= cutoff].copy()
 
         if df.empty:
-            console.print(f"[warning]No transactions found in the last {period} days.[/warning]")
+            if _verbose:
+                console.print(f"[warning]No transactions found in the last {period} days.[/warning]")
             raise typer.Exit(1)
 
         # --- Clean ---
         progress.update(task, description="Cleaning data…")
-        from receipt.pipeline.cleaner import normalize_descriptions, deduplicate, normalize_dates
+        from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
 
         df = normalize_descriptions(df)
         df = deduplicate(df)
@@ -143,8 +144,8 @@ def _run_pipeline(
         drift = None
         if compare:
             progress.update(task, description="Computing drift…")
-            from receipt.storage.store import ReceiptStore
             from receipt.pipeline.drift import DriftDetector
+            from receipt.storage.store import ReceiptStore
 
             store = ReceiptStore()
             prev_df = store.get_previous_period(df["date"].min())
@@ -152,7 +153,8 @@ def _run_pipeline(
                 detector_drift = DriftDetector()
                 drift = detector_drift.compare_periods(df, prev_df)
             else:
-                console.print("[info]No previous period found for comparison.[/info]")
+                if _verbose:
+                    console.print("[info]No previous period found for comparison.[/info]")
 
         # --- Narrative ---
         narrative = None
@@ -164,7 +166,8 @@ def _run_pipeline(
             try:
                 narrative = narrator.generate_narrative(stats, patterns, drift)
             except Exception as exc:
-                console.print(f"[warning]Narrative generation failed: {exc}[/warning]")
+                if _verbose:
+                    console.print(f"[warning]Narrative generation failed: {exc}[/warning]")
 
         # --- Save ---
         run_id = None
@@ -366,12 +369,12 @@ def demo() -> None:
     )
     console.print("[info]Embeddings disabled for speed. No API key needed.[/info]\n")
 
-    from receipt.ingestion.chase import ChaseParser
-    from receipt.pipeline.cleaner import normalize_descriptions, deduplicate, normalize_dates
-    from receipt.pipeline.categorizer import SemanticCategorizer
-    from receipt.pipeline.aggregator import compute_stats
-    from receipt.analysis.patterns import detect_patterns
     from receipt.analysis.anomalies import AnomalyDetector
+    from receipt.analysis.patterns import detect_patterns
+    from receipt.ingestion.chase import ChaseParser
+    from receipt.pipeline.aggregator import compute_stats
+    from receipt.pipeline.categorizer import SemanticCategorizer
+    from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
 
     df = ChaseParser().parse(sample)
     df = normalize_descriptions(df)

@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 from typer.testing import CliRunner
 
 from receipt.cli import app

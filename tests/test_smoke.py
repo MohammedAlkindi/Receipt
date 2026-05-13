@@ -1,12 +1,12 @@
 """Quick end-to-end smoke test (no API key needed)."""
 from pathlib import Path
 
-from receipt.ingestion.chase import ChaseParser
-from receipt.pipeline.cleaner import normalize_descriptions, deduplicate, normalize_dates
-from receipt.pipeline.categorizer import SemanticCategorizer
-from receipt.pipeline.aggregator import compute_stats
-from receipt.analysis.patterns import detect_patterns
 from receipt.analysis.anomalies import AnomalyDetector
+from receipt.analysis.patterns import detect_patterns
+from receipt.ingestion.chase import ChaseParser
+from receipt.pipeline.aggregator import compute_stats
+from receipt.pipeline.categorizer import SemanticCategorizer
+from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
 
 
 def test_pipeline_smoke():
