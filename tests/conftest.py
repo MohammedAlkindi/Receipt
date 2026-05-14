@@ -64,3 +64,10 @@ def plaid_df() -> pd.DataFrame:
     from receipt.ingestion.plaid import PlaidParser
 
     return PlaidParser().parse(_SAMPLE / "plaid_sample.csv")
+
+
+@pytest.fixture
+def generic_df() -> pd.DataFrame:
+    from receipt.ingestion.csv_parser import GenericCSVParser
+
+    return GenericCSVParser().parse(_SAMPLE / "generic_sample.csv")

@@ -1,4 +1,16 @@
-"""Anthropic API narrative generation."""
+"""Anthropic API narrative generation.
+
+ASSUMPTIONS:
+- Stats dict fields are exactly what compute_stats() returns in aggregator.py.
+  No field is referenced here that isn't present in that function's return dict.
+- Pattern.severity is constrained to ("critical", "warning", "info") per patterns.py.
+- DriftReport attributes (velocity_trend, increased, decreased, new_merchants,
+  dropped_merchants, subscription_drift) are accessed identically to the original.
+- temperature=0.7 balances specificity with creative recombination; lower it (e.g.
+  0.3) if output grows too unpredictable for production use.
+- by_merchant entries have the shape {description: {total: float, count: int}}
+  as produced by aggregator.compute_stats() via DataFrame.to_dict(orient="index").
+"""
 
 from __future__ import annotations
 
@@ -16,24 +28,117 @@ from receipt.pipeline.drift import DriftReport
 
 logger = logging.getLogger(__name__)
 
+_SEVERITY_ORDER: dict[str, int] = {"critical": 0, "warning": 1, "info": 2}
+
+_LOW_SIGNAL_PHRASES: list[str] = [
+    "you spent",
+    "consider reducing",
+    "it looks like",
+    "it's worth noting",
+    "it is worth noting",
+    "you may want to",
+    "you might want to",
+    "based on your spending",
+    "overall, your",
+    "in conclusion",
+    "as you can see",
+    "interestingly,",
+    "as a reminder",
+    "you should consider",
+]
+
 _SYSTEM_PROMPT = """\
-You are a sharp, warm financial narrator. You have been given structured \
-analysis of someone's transaction data including spending stats, detected \
-patterns, anomalies, and behavioral drift compared to last period.
+## ROLE
 
-Surface 3-5 genuinely interesting observations the person probably has \
-not noticed. Write like a smart friend, not a financial advisor. Be \
-specific with numbers when surprising. Never moralize. Lead with the \
-most interesting insight.
+You are a forensic spending analyst embedded inside a personal finance app. \
+Your job is to read structured transaction data and surface things the user \
+almost certainly has not noticed. You are not a budgeting coach, not a life \
+advisor, and not a generic finance writer. You write the way a sharp analyst \
+friend would talk after staring at someone's bank statement for ten minutes: \
+specific, direct, occasionally surprising, never preachy. \
+You reason step-by-step through the data before committing to any claim.
 
-Return only valid JSON with this exact structure:
+## CHAIN-OF-THOUGHT INSTRUCTION
+
+Before writing each insight, silently answer these questions:
+1. What number in this data is genuinely surprising relative to the other numbers?
+2. Is there a ratio or comparison that reframes a flat figure in a non-obvious way?
+3. Is there a time-based trend (week spike, late-night pattern, day-of-week) \
+with a concrete dollar consequence?
+4. Is there merchant concentration or category dominance the user probably \
+hasn't clocked?
+5. Would a smart person glancing at this data already know this insight, or \
+would it stop them cold?
+
+Discard any insight where the answer to question 5 is "they'd already know this." \
+Only write insights that pass.
+
+## WHAT MAKES A GOOD INSIGHT
+
+- Anchored in a specific dollar amount, ratio, or count from the data
+- Names the exact merchant, category, or calendar week driving the claim
+- Reframes a familiar number in a way that changes how the user sees it
+- Leads with the most interesting fact — no wind-up, no preamble
+- Treats the user as an intelligent adult who can handle unvarnished truth
+- Could not have been written without this specific dataset
+
+## WHAT TO AVOID
+
+Never use these phrases or patterns:
+- "You spent" as a sentence opener — flat, adds no value
+- "Consider reducing" / "You should consider" — moralizing
+- "It looks like" — hedge that weakens the claim
+- "It's worth noting" / "It is worth noting" — pure filler
+- "You may want to" / "You might want to" — unsolicited advice
+- "Based on your spending" — unnecessary preamble
+- "Interestingly," as a sentence opener — tells rather than shows
+- "Overall," / "In conclusion," / "As you can see," — filler transitions
+- "As a reminder," — condescending
+- Any sentence that could appear verbatim in a generic personal finance article
+
+Do not moralize about spending categories. \
+Do not give advice that isn't tied to a specific number in this data. \
+Do not write anything that would be equally true for any person.
+
+## EXAMPLE: GOOD vs. BAD INSIGHT
+
+BAD INSIGHT
+  headline: "You spent a lot on food this month"
+  detail: "It looks like your food spending was higher than usual. \
+Consider reducing dining out to save money. You might want to cook more at home."
+  WHY BAD: Flat opener. Moralizes twice. No specific number, merchant, or \
+comparison. Could appear in any personal finance newsletter.
+
+GOOD INSIGHT
+  headline: "Chipotle alone consumed 34% of your entire food budget"
+  detail: "Eleven visits for $187 total makes Chipotle your second-largest \
+single-merchant spend after rent. At that frequency it has crossed from \
+occasional treat into a quasi-fixed cost. The other nine food merchants \
+combined cost less."
+  WHY GOOD: Specific merchant, exact dollar amount, exact percentage, \
+surprising comparison (vs. rent), reframes the behavior without moralizing.
+
+## OUTPUT FORMAT
+
+Return ONLY valid JSON. No markdown fences, no backticks, no text before or after.
+
+Schema:
 {
   "insights": [
-    {"headline": "bold one-liner", "detail": "2-3 sentence explanation"}
+    {
+      "headline": "string — bold one-liner, max 12 words, anchored in a specific number",
+      "detail": "string — 2-3 sentences, specific figures, no moralizing"
+    }
   ],
-  "next_steps": "one warm paragraph",
-  "tldr": "one sentence summary of the whole month"
-}"""
+  "next_steps": "string — one specific paragraph, 2-4 sentences, grounded in a pattern from this data",
+  "tldr": "string — one sentence, max 25 words, the single most surprising fact about this period"
+}
+
+Constraints:
+- insights: 3 to 5 items, sorted most-surprising first
+- Prioritize patterns marked CRITICAL or WARNING when choosing what to highlight
+- Output must parse as valid JSON with no trailing commas
+- Do not wrap the JSON in any other text"""
 
 
 @dataclass
@@ -67,60 +172,157 @@ def _build_prompt(
 ) -> str:
     parts: list[str] = []
 
-    parts.append("=== SPENDING SUMMARY ===")
-    parts.append(f"Total spent: ${abs(stats.get('total_spent', 0)):.2f}")
-    parts.append(f"Total income: ${stats.get('total_income', 0):.2f}")
-    parts.append(f"Net: ${stats.get('net', 0):.2f}")
-    parts.append(f"Transactions analyzed: {stats.get('transaction_count', 0)}")
+    total_spent = abs(stats.get("total_spent", 0))
+    total_income = stats.get("total_income", 0)
+    net = stats.get("net", 0)
+    tx_count = stats.get("transaction_count", 0)
+    expense_count = stats.get("expense_count", 0)
+    income_count = stats.get("income_count", 0)
+    by_week = stats.get("by_week", {})
+    cat_count = len(stats.get("by_category", {}))
 
+    # Determine date range from week keys if available
+    date_range = ""
+    if by_week:
+        sorted_weeks = sorted(by_week.keys())
+        date_range = f" from {sorted_weeks[0]} to {sorted_weeks[-1]}"
+
+    # -------------------------------------------------------------------------
+    parts.append("## CONTEXT")
+    parts.append(
+        f"This dataset covers {tx_count} transactions "
+        f"({expense_count} expenses, {income_count} income events) "
+        f"spanning {len(by_week)} calendar week(s){date_range} "
+        f"across {cat_count} spending categories. "
+        "The user wants to understand where their money actually went "
+        "and what non-obvious patterns exist in their behavior."
+    )
+    parts.append("")
+
+    # -------------------------------------------------------------------------
+    parts.append("## SPENDING OVERVIEW")
+    parts.append(f"- Total spent: ${total_spent:.2f}")
+    parts.append(f"- Total income: ${total_income:.2f}")
+    net_sign = "+" if net >= 0 else ""
+    parts.append(f"- Net cash flow: {net_sign}${net:.2f}")
     if stats.get("subscription_total"):
-        parts.append(f"Subscription spend: ${stats['subscription_total']:.2f}")
-
+        sub_total = stats["subscription_total"]
+        sub_pct = (sub_total / total_spent * 100) if total_spent else 0.0
+        parts.append(
+            f"- Subscription spend: ${sub_total:.2f} ({sub_pct:.1f}% of total outflow)"
+        )
     if stats.get("largest_single_transaction"):
         lt = stats["largest_single_transaction"]
         parts.append(
-            f"Largest transaction: ${abs(lt['amount']):.2f} at {lt['description']}"
+            f"- Largest single transaction: ${abs(lt['amount']):.2f} "
+            f"at {lt['description']} on {lt['date'][:10]}"
         )
-
     if stats.get("most_frequent_merchant"):
         mf = stats["most_frequent_merchant"]
         parts.append(
-            f"Most visited merchant: {mf['merchant']} ({mf['count']} times)"
+            f"- Most visited merchant: {mf['merchant']} ({mf['count']} visits)"
         )
+    parts.append("")
 
-    parts.append("\n=== SPENDING BY CATEGORY ===")
-    for cat, data in stats.get("by_category", {}).items():
-        parts.append(f"  {cat}: ${data['total']:.2f} ({data['count']} transactions, avg ${data['avg']:.2f})")
+    # -------------------------------------------------------------------------
+    parts.append("## CATEGORY BREAKDOWN")
+    by_cat = stats.get("by_category", {})
+    if by_cat:
+        sorted_cats = sorted(by_cat.items(), key=lambda kv: kv[1]["total"], reverse=True)
+        for cat, data in sorted_cats:
+            pct = (data["total"] / total_spent * 100) if total_spent else 0.0
+            parts.append(
+                f"- {cat}: ${data['total']:.2f} ({pct:.1f}% of spend) "
+                f"— {data['count']} txns, avg ${data['avg']:.2f}"
+            )
+    else:
+        parts.append("- No category data available")
+    parts.append("")
 
-    parts.append("\n=== WEEKLY SPENDING ===")
-    for week, total in stats.get("by_week", {}).items():
-        parts.append(f"  {week}: ${total:.2f}")
+    # -------------------------------------------------------------------------
+    by_merchant = stats.get("by_merchant", {})
+    if by_merchant:
+        parts.append("## TOP MERCHANTS (by total spend)")
+        for merchant, mdata in list(by_merchant.items())[:10]:
+            m_pct = (mdata["total"] / total_spent * 100) if total_spent else 0.0
+            parts.append(
+                f"- {merchant}: ${mdata['total']:.2f} ({m_pct:.1f}% of spend) "
+                f"— {mdata['count']} visits"
+            )
+        parts.append("")
 
+    # -------------------------------------------------------------------------
+    parts.append("## WEEKLY PATTERN")
+    if by_week:
+        weekly_vals = list(by_week.values())
+        avg_weekly = sum(weekly_vals) / len(weekly_vals)
+        parts.append(f"- Weekly average: ${avg_weekly:.2f}")
+        for week, total in sorted(by_week.items()):
+            annotation = ""
+            if avg_weekly > 0:
+                ratio = total / avg_weekly
+                if ratio >= 1.5:
+                    annotation = f"  *** SPIKE: {ratio:.1f}x the weekly average"
+                elif ratio <= 0.5:
+                    annotation = f"  (low week: {ratio:.1f}x avg)"
+            parts.append(f"- {week}: ${total:.2f}{annotation}")
+    else:
+        parts.append("- No weekly data available")
+    parts.append("")
+
+    # -------------------------------------------------------------------------
     if patterns:
-        parts.append("\n=== DETECTED PATTERNS ===")
-        for p in patterns:
-            parts.append(f"  [{p.severity.upper()}] {p.type}: {p.headline}")
+        sorted_patterns = sorted(
+            patterns, key=lambda p: _SEVERITY_ORDER.get(p.severity, 99)
+        )
+        parts.append("## DETECTED PATTERNS")
+        for p in sorted_patterns:
+            parts.append(f"- [{p.severity.upper()}] {p.type}: {p.headline}")
+        parts.append("")
 
+    # -------------------------------------------------------------------------
     if drift:
-        parts.append("\n=== BEHAVIORAL DRIFT vs PREVIOUS PERIOD ===")
+        parts.append("## BEHAVIORAL DRIFT vs PREVIOUS PERIOD")
         if drift.velocity_trend != "stable":
-            parts.append(f"  Spending velocity: {drift.velocity_trend}")
+            parts.append(f"- Spending velocity: {drift.velocity_trend}")
         for cat, detail in drift.increased.items():
             parts.append(
-                f"  {cat} UP {detail['change_pct']}%: ${detail['previous']} → ${detail['current']}"
+                f"- {cat} UP {detail['change_pct']}%: "
+                f"${detail['previous']} → ${detail['current']}"
             )
         for cat, detail in drift.decreased.items():
             parts.append(
-                f"  {cat} DOWN {abs(detail['change_pct'])}%: ${detail['previous']} → ${detail['current']}"
+                f"- {cat} DOWN {abs(detail['change_pct'])}%: "
+                f"${detail['previous']} → ${detail['current']}"
             )
         if drift.new_merchants:
-            parts.append(f"  New merchants: {', '.join(drift.new_merchants[:8])}")
+            parts.append(
+                f"- New merchants this period: {', '.join(drift.new_merchants[:8])}"
+            )
         if drift.dropped_merchants:
-            parts.append(f"  Dropped merchants: {', '.join(drift.dropped_merchants[:8])}")
+            parts.append(
+                f"- Merchants no longer appearing: {', '.join(drift.dropped_merchants[:8])}"
+            )
         if drift.subscription_drift.get("new"):
-            parts.append(f"  New subscriptions: {', '.join(drift.subscription_drift['new'])}")
+            parts.append(
+                f"- New subscriptions: {', '.join(drift.subscription_drift['new'])}"
+            )
         if drift.subscription_drift.get("cancelled"):
-            parts.append(f"  Cancelled subscriptions: {', '.join(drift.subscription_drift['cancelled'])}")
+            parts.append(
+                f"- Cancelled subscriptions: {', '.join(drift.subscription_drift['cancelled'])}"
+            )
+        parts.append("")
+
+    # -------------------------------------------------------------------------
+    parts.append("## YOUR TASK")
+    parts.append(
+        "Using only the data above, produce 3–5 insights sorted by how surprising "
+        "they are (most surprising first). Reason through what is non-obvious before "
+        "writing. Prioritize CRITICAL and WARNING patterns. Name specific merchants, "
+        "exact dollar amounts, and precise ratios. Discard any insight a generic "
+        "finance article could have written without this data. "
+        "Return only valid JSON matching the schema in your system prompt."
+    )
 
     return "\n".join(parts)
 
@@ -133,8 +335,29 @@ class Narrator:
     MAX_RETRIES = 3
     API_TIMEOUT = 30.0
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, temperature: float = 0.7):
         self._api_key = api_key
+        self._temperature = temperature
+
+    @staticmethod
+    def _validate_insight_quality(insights: list[Insight]) -> None:
+        """Warn if more than half the insights contain low-signal phrases."""
+        if not insights:
+            return
+        failures = 0
+        for insight in insights:
+            text = (insight.headline + " " + insight.detail).lower()
+            if any(phrase in text for phrase in _LOW_SIGNAL_PHRASES):
+                failures += 1
+                logger.debug("Low-quality insight flagged: %r", insight.headline)
+        if failures > len(insights) / 2:
+            logger.warning(
+                "Insight quality check: %d/%d insights contain low-signal phrases. "
+                "Model may be producing generic output; consider adjusting the prompt "
+                "or lowering temperature.",
+                failures,
+                len(insights),
+            )
 
     def generate_narrative(
         self,
@@ -168,6 +391,7 @@ class Narrator:
                     system=_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": user_content}],
                     timeout=self.API_TIMEOUT,
+                    temperature=self._temperature,
                 )
                 raw_text = response.content[0].text
                 data = json.loads(raw_text)
@@ -175,11 +399,13 @@ class Narrator:
                     Insight(headline=i["headline"], detail=i["detail"])
                     for i in data.get("insights", [])
                 ]
-                return NarrativeReport(
+                report = NarrativeReport(
                     tldr=data.get("tldr", ""),
                     insights=insights,
                     next_steps=data.get("next_steps", ""),
                 )
+                self._validate_insight_quality(insights)
+                return report
             except json.JSONDecodeError as exc:
                 logger.debug("Malformed JSON response (attempt %d): %s", attempt + 1, raw_text)
                 logger.warning("JSON parse error on attempt %d: %s", attempt + 1, exc)

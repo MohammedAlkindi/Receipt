@@ -1,6 +1,11 @@
 # receipt
 
-**receipt** is an intelligent personal finance analysis engine. Feed it a CSV export from Chase, Bank of America, or Plaid (or any generic bank export), and it will cluster your transactions semantically, detect behavioral patterns and anomalies, track how your spending is drifting month over month, and synthesize everything into a concise plain-English narrative via the Anthropic API — the kind of insight a sharp friend with an accounting degree would give you, not a generic budget app.
+[![CI](https://github.com/alkindymhmd/receipt/actions/workflows/ci.yml/badge.svg)](https://github.com/alkindymhmd/receipt/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%20|%203.12-blue)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](https://github.com/alkindymhmd/receipt/pulls)
+
+Your bank app tells you how much you spent. **receipt** tells you what actually happened — semantic clustering, seven behavioral detectors, and an AI narrative that thinks like a sharp friend with an accounting degree: specific dollar amounts, named merchants, non-obvious patterns, and none of the generic budget-app moralizing.
 
 ---
 
@@ -40,6 +45,19 @@ CSV file / base64 payload
         ├──▶ CLI (Typer + rich)
         └──▶ API (FastAPI + uvicorn)
 ```
+
+---
+
+## Features
+
+- **Auto-detects bank format** from column signatures — drop a Chase, BofA, Plaid, or generic CSV export and the right parser is selected without a flag.
+- **Semantic transaction clustering** via `all-MiniLM-L6-v2` + HDBSCAN groups transactions by meaning, not keyword matching — "SBUX #04892" and "Starbucks Store Times Sq" land in the same cluster automatically.
+- **Seven behavioral detectors** flag subscription creep, anomalous spending weeks, weekend splurge, single-merchant dominance, late-night food spend, income irregularity, and recurring-forgotten merchants.
+- **Isolation Forest anomaly scoring** assigns an outlier score to every individual transaction, surfacing charges that are statistically unusual relative to your own patterns.
+- **Month-over-month drift tracking** reports which categories accelerated or shrank >20%, which merchants appeared or disappeared, and whether second-half spend outpaced first-half.
+- **Forensic AI narrative** via the Anthropic API generates a TL;DR, 3–5 insights anchored to specific merchants and dollar amounts, and a concrete next-steps paragraph — with a quality guard that suppresses generic phrases before the report is returned.
+- **Persistent run history** stores every analysis to SQLite; replay, compare, or export any past run as Markdown with a single command.
+- **CLI and REST API** — the same pipeline runs as a `receipt analyze` command or as a FastAPI server accepting base64-encoded CSV payloads for programmatic access.
 
 ---
 
@@ -86,7 +104,7 @@ receipt analyze ~/Downloads/chase_activity.csv \
   --api-key $ANTHROPIC_API_KEY
 ```
 
-Expected terminal output (excerpt):
+Expected terminal output (illustrative — numbers match the bundled Chase sample, narrative text is representative):
 
 ```
 ╭──────────────────────────────────────────────────────╮
@@ -107,8 +125,18 @@ Expected terminal output (excerpt):
 │  6 active subscriptions totalling $117.46            │
 ╰──────────────────────────────────────────────────────╯
 
-╭────────────────────── TL;DR ─────────────────────────╮
-│  Food delivery ate 34% of your dining budget again.  │
+╭──────────────────── AI Insights ─────────────────────╮
+│                                                      │
+│  TL;DR  Delivery apps captured 80% of your dining   │
+│         budget: $122 of $152 spent eating out went  │
+│         to Uber Eats, DoorDash, or Grubhub.         │
+│                                                      │
+│  ▸ Grubhub's April 19 order ($38.50) was your       │
+│    third-largest individual charge this month —      │
+│    behind only rent and the $149 Amazon purchase.   │
+│    Four delivery orders in 19 days is a run rate    │
+│    of ~$237/month if April's frequency holds.       │
+│                                                      │
 ╰──────────────────────────────────────────────────────╯
 ```
 
@@ -355,6 +383,15 @@ On Windows, the Scripts directory is typically `%APPDATA%\Python\PythonXY\Script
 **Narrative generation times out**
 
 The Anthropic API call has a 30-second timeout. If your network is slow or the API is degraded, you will see a `502` from the server or a warning in the CLI. Check `https://status.anthropic.com` and retry.
+
+---
+
+## Roadmap
+
+- [ ] **PyPI release** — package is install-from-source only; publishing to PyPI will enable `pip install receipt` without cloning.
+- [ ] **Hosted demo** — a zero-install web interface where anyone can upload a CSV and see an analysis without running a local server.
+- [ ] **Database migration system** — schema changes currently require deleting `~/.receipt/receipt.db`; Alembic migrations would make upgrades non-destructive.
+- [ ] **Multi-user API support** — the FastAPI server has no authentication or user isolation; supporting multiple users requires API key auth and per-user database partitioning.
 
 ---
 
