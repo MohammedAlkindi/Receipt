@@ -10,7 +10,7 @@ from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_des
 
 
 def test_pipeline_smoke():
-    df = ChaseParser().parse(Path("data/sample/chase_sample.csv"))
+    df = ChaseParser().parse(Path(__file__).parent.parent / "data" / "sample" / "chase_sample.csv")
     assert len(df) > 0
 
     df = normalize_descriptions(df)

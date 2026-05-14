@@ -32,6 +32,7 @@ jobs:
       - name: Run tests (excluding slow embedding tests)
         run: |
           pytest tests/test_ingestion.py \
+                 tests/test_narrator_quality.py \
                  tests/test_pipeline.py \
                  tests/test_storage.py \
                  tests/test_smoke.py \

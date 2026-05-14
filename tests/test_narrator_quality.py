@@ -3,6 +3,9 @@
 Validates that the narrator produces specific, number-grounded narratives free
 of generic filler — not just structurally valid JSON.  All API calls are fully
 mocked; no real API key is required.
+
+GENERIC_PHRASES is imported directly from receipt.analysis.narrator._LOW_SIGNAL_PHRASES
+so the test and the production validator stay in sync automatically.
 """
 
 from __future__ import annotations
@@ -12,22 +15,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from receipt.analysis.narrator import NarrativeReport, Narrator
+from receipt.analysis.narrator import NarrativeReport, Narrator, _LOW_SIGNAL_PHRASES as GENERIC_PHRASES
 from receipt.pipeline.aggregator import compute_stats
-
-# ---------------------------------------------------------------------------
-# Banned phrases — generic filler that should never appear in quality output
-# ---------------------------------------------------------------------------
-
-GENERIC_PHRASES: list[str] = [
-    "it looks like",
-    "it's worth noting",
-    "consider reducing",
-    "you may want to",
-    "it is important",
-    "make sure to",
-    "don't forget",
-]
 
 # ---------------------------------------------------------------------------
 # Canonical good-quality narrative used as the mock API response

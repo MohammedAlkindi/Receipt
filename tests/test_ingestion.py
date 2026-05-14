@@ -154,3 +154,27 @@ class TestDetectParser:
     def test_raises_on_missing_file(self, tmp_path):
         with pytest.raises(ParseError):
             detect_parser(tmp_path / "nonexistent.csv")
+
+
+# ---------------------------------------------------------------------------
+# GenericCSVParser — sample file integration tests
+# ---------------------------------------------------------------------------
+
+class TestGenericSampleFile:
+    def test_parses_generic_sample(self, generic_df):
+        assert _STANDARD_COLS.issubset(set(generic_df.columns))
+        assert len(generic_df) == 75
+
+    def test_income_rows_are_positive(self, generic_df):
+        assert len(generic_df[generic_df["amount"] > 0]) >= 1
+
+    def test_expenses_are_negative(self, generic_df):
+        assert len(generic_df[generic_df["amount"] < 0]) >= 1
+
+    def test_date_range_spans_march_to_may(self, generic_df):
+        assert generic_df["date"].dt.month.min() == 3
+        assert generic_df["date"].dt.month.max() == 5
+
+    def test_auto_detection_returns_generic_parser(self):
+        result = detect_parser(_SAMPLE / "generic_sample.csv")
+        assert isinstance(result, GenericCSVParser)
