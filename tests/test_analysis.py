@@ -149,6 +149,48 @@ class TestAnomalyDetector:
         hotel_row = result[result["description"] == "Luxury Hotel"]
         assert hotel_row["anomaly_score"].iloc[0] >= result["anomaly_score"].median()
 
+    def test_features_include_category_and_timing(self):
+        """Task 7: _build_features returns 5 columns when category column present."""
+        import numpy as np
+
+        rows = []
+        for i in range(1, 10):
+            rows.append(_tx(f"2026-04-{i:02d}", "Coffee", -5.0, category="food_dining"))
+        df = pd.DataFrame(rows)
+        detector = AnomalyDetector()
+        expenses = df[df["amount"] < 0].copy()
+        features = detector._build_features(expenses)
+        assert features.shape == (len(expenses), 5), (
+            f"Expected 5 feature columns, got {features.shape[1]}"
+        )
+
+    def test_features_category_stable_across_calls(self):
+        """Task 7: category encoding is deterministic — same result on two calls."""
+        import numpy as np
+
+        rows = [_tx(f"2026-04-{i:02d}", "Shop", -10.0, category=cat)
+                for i, cat in enumerate(["food_dining", "groceries", "shopping"], start=1)]
+        df = pd.DataFrame(rows)
+        expenses = df[df["amount"] < 0].copy()
+        detector = AnomalyDetector()
+        f1 = detector._build_features(expenses)
+        f2 = detector._build_features(expenses)
+        np.testing.assert_array_equal(f1, f2)
+
+    def test_features_without_category_defaults_to_minus_one(self):
+        """Task 7: _build_features returns 5 columns even without category column."""
+        import numpy as np
+
+        rows = [_tx(f"2026-04-{i:02d}", "Coffee", -5.0) for i in range(1, 8)]
+        df = pd.DataFrame(rows)
+        df.drop(columns=["category"], inplace=True, errors="ignore")
+        expenses = df[df["amount"] < 0].copy()
+        detector = AnomalyDetector()
+        features = detector._build_features(expenses)
+        assert features.shape[1] == 5
+        # category_encoded column (index 3) should all be -1
+        assert (features[:, 3] == -1).all()
+
 
 # ---------------------------------------------------------------------------
 # Narrator (mocked)

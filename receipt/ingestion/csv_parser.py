@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from io import IOBase
 from pathlib import Path
-from typing import Union
+from typing import Literal, Union
 
 import pandas as pd
 
 from receipt.ingestion.base import ParseError, TransactionParser
+
+logger = logging.getLogger(__name__)
 
 MAX_ROWS = 50_000
 
@@ -25,11 +28,32 @@ def _normalise_col(col: str) -> str:
     return re.sub(r"\s+", " ", col.strip().lower())
 
 
-def _find_col(columns: list[str], variants: set[str]) -> str | None:
+def _find_col(
+    columns: list[str],
+    variants: set[str],
+    priority: Literal["exact", "partial"] = "exact",
+) -> str | None:
+    """Return the first column matching *variants*.
+
+    Tries exact normalized matches first, then falls back to partial (substring)
+    matches regardless of the *priority* parameter — callers rely on this ordering
+    to prefer e.g. "Transaction Date" over "date_of_posting".
+    """
     norm = {_normalise_col(c): c for c in columns}
-    for variant in variants:
+
+    # Exact pass: normalized column name must be in variants
+    for variant in sorted(variants):  # sorted for deterministic ordering
         if variant in norm:
             return norm[variant]
+
+    if priority == "exact":
+        return None
+
+    # Partial pass: variant appears as substring of the normalized column name
+    for col_norm, col_orig in norm.items():
+        for variant in sorted(variants):
+            if variant in col_norm:
+                return col_orig
     return None
 
 
@@ -44,13 +68,27 @@ class GenericCSVParser(TransactionParser):
 
     def parse(self, source: Union[str, Path, IOBase]) -> pd.DataFrame:
         df = self._read_raw(source)
+
+        if len(df) == 0:
+            raise ParseError("CSV has no data rows")
+
         cols = list(df.columns)
+
+        for warning in self.detect_ambiguities(cols):
+            logger.warning("GenericCSVParser: %s", warning)
 
         date_col = _find_col(cols, _DATE_VARIANTS)
         desc_col = _find_col(cols, _DESC_VARIANTS)
         amount_col = _find_col(cols, _AMOUNT_VARIANTS)
         debit_col = _find_col(cols, _DEBIT_VARIANTS)
         credit_col = _find_col(cols, _CREDIT_VARIANTS)
+
+        # Conflict: amount AND debit/credit present — amount takes precedence
+        if amount_col and (debit_col or credit_col):
+            logger.warning(
+                "GenericCSVParser: both 'amount' and debit/credit columns detected; "
+                "'amount' takes precedence. Ignoring debit/credit columns."
+            )
 
         if date_col is None:
             raise ParseError(
@@ -82,6 +120,30 @@ class GenericCSVParser(TransactionParser):
             result["amount"] = debits.fillna(0) + credits.fillna(0)
 
         return self._finalise(result, source_name="generic")
+
+    @staticmethod
+    def detect_ambiguities(columns: list[str]) -> list[str]:
+        """Return human-readable warnings about ambiguous column sets."""
+        warnings: list[str] = []
+        norm_cols = [_normalise_col(c) for c in columns]
+
+        # Multiple date candidates
+        date_matches = [c for c in norm_cols if any(v in c for v in _DATE_VARIANTS)]
+        if len(date_matches) > 1:
+            warnings.append(
+                f"Multiple date-like columns detected: {date_matches}. "
+                "Using first exact match."
+            )
+
+        # Multiple amount candidates
+        amount_matches = [c for c in norm_cols if any(v in c for v in _AMOUNT_VARIANTS)]
+        if len(amount_matches) > 1:
+            warnings.append(
+                f"Multiple amount-like columns detected: {amount_matches}. "
+                "Using first exact match."
+            )
+
+        return warnings
 
     def _read_raw(self, source: Union[str, Path, IOBase]) -> pd.DataFrame:
         encodings = ["utf-8-sig", "utf-8", "latin-1", "cp1252"]

@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from receipt.storage.models import AnalysisRun, Base, Merchant, Transaction
+
+logger = logging.getLogger(__name__)
+
+_NARRATIVE_SCHEMA_VERSION = 1
 
 
 class ReceiptStore:
@@ -23,6 +29,8 @@ class ReceiptStore:
             db_path = Path.home() / ".receipt" / "receipt.db"
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._engine = create_engine(f"sqlite:///{db_path}", echo=False)
+        # Schema is managed by Alembic — run `alembic upgrade head` after install
+        # and after each upgrade to apply migrations.
         Base.metadata.create_all(self._engine)
 
     # ------------------------------------------------------------------
@@ -74,7 +82,7 @@ class ReceiptStore:
                 for _, row in new_df.iterrows()
             ]
 
-            session.bulk_insert_mappings(Transaction, mappings)
+            session.execute(sqlite_insert(Transaction), mappings)
             session.commit()
 
         return len(mappings)
@@ -161,7 +169,7 @@ class ReceiptStore:
             ).scalars().all()
         result = []
         for r in runs:
-            narrative = json.loads(r.narrative_json) if r.narrative_json else None
+            narrative = _deserialize_narrative(json.loads(r.narrative_json)) if r.narrative_json else None
             result.append(
                 {
                     "run_id": r.run_id,
@@ -182,7 +190,7 @@ class ReceiptStore:
             ).scalar_one_or_none()
             if not run:
                 return None
-            narrative = json.loads(run.narrative_json) if run.narrative_json else None
+            narrative = _deserialize_narrative(json.loads(run.narrative_json)) if run.narrative_json else None
             return {
                 "run_id": run.run_id,
                 "created_at": run.created_at.isoformat(),
@@ -200,8 +208,8 @@ class ReceiptStore:
     def upsert_merchants(self, df: pd.DataFrame) -> None:
         """Update merchant summary table from a categorized transaction DataFrame.
 
-        Bulk-fetches all existing normalized_names in one query, then batch-inserts
-        new merchants and issues targeted UPDATE statements only for those that exist.
+        Uses INSERT ... ON CONFLICT DO UPDATE (upsert) to avoid race conditions
+        on concurrent writes to the same normalized_name.
         """
         expenses = df[df["amount"] < 0].copy()
         if expenses.empty:
@@ -220,47 +228,39 @@ class ReceiptStore:
             cat_map = expenses.groupby("description")["category"].first().to_dict()
             grouped["category"] = grouped["description"].map(cat_map)
 
-        norm_names = [str(r["description"]).lower().strip() for _, r in grouped.iterrows()]
+        mappings = []
+        for _, row in grouped.iterrows():
+            norm = str(row["description"]).lower().strip()
+            has_cat = "category" in grouped.columns
+            cat_val = (
+                str(row["category"]) if has_cat and pd.notna(row["category"]) else None
+            )
+            mappings.append(
+                {
+                    "name": str(row["description"]),
+                    "normalized_name": norm,
+                    "category": cat_val,
+                    "first_seen": _to_utc_datetime(row["first_seen"]),
+                    "last_seen": _to_utc_datetime(row["last_seen"]),
+                    "total_spent": float(row["total"]),
+                    "transaction_count": int(row["count"]),
+                }
+            )
+
+        if not mappings:
+            return
 
         with Session(self._engine) as session:
-            existing_rows = session.execute(
-                select(Merchant).where(Merchant.normalized_name.in_(norm_names))
-            ).scalars().all()
-            existing_map: dict[str, Merchant] = {m.normalized_name: m for m in existing_rows}
-
-            new_mappings: list[dict] = []
-            for _, row in grouped.iterrows():
-                norm = str(row["description"]).lower().strip()
-                has_cat = "category" in grouped.columns
-                cat_val = (
-                    str(row["category"]) if has_cat and pd.notna(row["category"]) else None
-                )
-                if norm in existing_map:
-                    m = existing_map[norm]
-                    session.execute(
-                        update(Merchant)
-                        .where(Merchant.normalized_name == norm)
-                        .values(
-                            total_spent=float(m.total_spent) + float(row["total"]),
-                            transaction_count=int(m.transaction_count) + int(row["count"]),
-                            last_seen=_to_utc_datetime(row["last_seen"]),
-                        )
-                    )
-                else:
-                    new_mappings.append(
-                        {
-                            "name": str(row["description"]),
-                            "normalized_name": norm,
-                            "category": cat_val,
-                            "first_seen": _to_utc_datetime(row["first_seen"]),
-                            "last_seen": _to_utc_datetime(row["last_seen"]),
-                            "total_spent": float(row["total"]),
-                            "transaction_count": int(row["count"]),
-                        }
-                    )
-
-            if new_mappings:
-                session.bulk_insert_mappings(Merchant, new_mappings)
+            stmt = sqlite_insert(Merchant).values(mappings)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["normalized_name"],
+                set_={
+                    "total_spent": Merchant.total_spent + stmt.excluded.total_spent,
+                    "transaction_count": Merchant.transaction_count + stmt.excluded.transaction_count,
+                    "last_seen": stmt.excluded.last_seen,
+                },
+            )
+            session.execute(stmt)
             session.commit()
 
     def get_merchants(self, limit: int = 50) -> list[dict[str, Any]]:
@@ -295,6 +295,38 @@ class ReceiptStore:
                     select(sqlfunc.count()).select_from(Merchant)
                 ).scalar() or 0,
             }
+
+
+def _deserialize_narrative(data: dict[str, Any]) -> dict[str, Any]:
+    """Migrate narrative dicts across schema versions.
+
+    Returns the best available data — never raises.
+    """
+    try:
+        version = data.get("schema_version", 0)
+        if version == 0:
+            # Legacy: ensure insights is a list of {headline, detail} dicts
+            insights = data.get("insights", [])
+            if not isinstance(insights, list):
+                insights = []
+            data = {
+                "schema_version": 0,
+                "tldr": data.get("tldr", ""),
+                "insights": insights,
+                "next_steps": data.get("next_steps", ""),
+                "generated_at": data.get("generated_at", ""),
+            }
+        elif version == 1:
+            pass  # current — return as-is
+        else:
+            logger.warning(
+                "Narrative schema_version %d is newer than supported (%d); returning as-is.",
+                version,
+                _NARRATIVE_SCHEMA_VERSION,
+            )
+        return data
+    except Exception:
+        return {}
 
 
 def _to_utc_datetime(val: Any) -> datetime:

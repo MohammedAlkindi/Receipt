@@ -83,18 +83,18 @@ def _patch_pipeline(mocker, *, narrative=None, drift=None, save_run_id=None):
     mocker.patch("receipt.ingestion.detect_parser", return_value=ns.parser)
 
     # Cleaner
-    mocker.patch("receipt.pipeline.cleaner.normalize_descriptions", side_effect=lambda df: df)
-    mocker.patch("receipt.pipeline.cleaner.deduplicate", side_effect=lambda df: df)
-    mocker.patch("receipt.pipeline.cleaner.normalize_dates", side_effect=lambda df: df)
+    mocker.patch("receipt.pipeline.cleaner.normalize_descriptions", side_effect=lambda df, **kwargs: df)
+    mocker.patch("receipt.pipeline.cleaner.deduplicate", side_effect=lambda df, **kwargs: df)
+    mocker.patch("receipt.pipeline.cleaner.normalize_dates", side_effect=lambda df, **kwargs: df)
 
     # Categorizer
     ns.categorizer = mocker.MagicMock()
-    ns.categorizer.categorize.side_effect = lambda df: df
+    ns.categorizer.categorize.side_effect = lambda df, **kwargs: df
     mocker.patch("receipt.pipeline.categorizer.SemanticCategorizer", return_value=ns.categorizer)
 
     # Anomaly detector
     ns.anomaly = mocker.MagicMock()
-    ns.anomaly.fit_predict.side_effect = lambda df: df
+    ns.anomaly.fit_predict.side_effect = lambda df, **kwargs: df
     mocker.patch("receipt.analysis.anomalies.AnomalyDetector", return_value=ns.anomaly)
 
     # Aggregator
@@ -394,6 +394,66 @@ class TestExport:
         result = runner.invoke(app, ["export", "run-abc"])
         assert result.exit_code == 0
         assert "No narrative available" in result.output
+
+
+# ---------------------------------------------------------------------------
+# FastAPI endpoint typing tests (Task 10)
+# ---------------------------------------------------------------------------
+
+class TestAPIResponseModels:
+    def test_health_response_typed(self, mocker, tmp_path):
+        """Task 10: /health returns JSON with status, db, version, narrative_service keys."""
+        from fastapi.testclient import TestClient
+        from receipt.api.server import app as fastapi_app
+
+        mocker.patch(
+            "receipt.storage.store.ReceiptStore",
+            return_value=mocker.MagicMock(
+                db_stats=mocker.MagicMock(
+                    return_value={"transactions": 0, "analysis_runs": 0, "merchants": 0}
+                )
+            ),
+        )
+
+        client = TestClient(fastapi_app)
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "status" in body
+        assert "db" in body
+        assert "version" in body
+        assert "narrative_service" in body
+
+    def test_history_endpoint_returns_typed_list(self, mocker):
+        """Task 10: /history returns list of AnalysisRunSummary-shaped dicts."""
+        from fastapi.testclient import TestClient
+        from receipt.api.server import app as fastapi_app
+
+        mocker.patch(
+            "receipt.storage.store.ReceiptStore",
+            return_value=mocker.MagicMock(
+                get_analysis_history=mocker.MagicMock(
+                    return_value=[
+                        {
+                            "run_id": "r1",
+                            "created_at": "2026-04-01T00:00:00",
+                            "period_start": "2026-03-01T00:00:00",
+                            "period_end": "2026-03-31T00:00:00",
+                            "source_file": "test.csv",
+                            "transaction_count": 10,
+                            "tldr": "Good month.",
+                        }
+                    ]
+                )
+            ),
+        )
+
+        client = TestClient(fastapi_app)
+        resp = client.get("/history")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert isinstance(items, list)
+        assert items[0]["run_id"] == "r1"
 
 
 # ---------------------------------------------------------------------------

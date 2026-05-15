@@ -158,6 +158,7 @@ class NarrativeReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": 1,
             "tldr": self.tldr,
             "insights": [{"headline": i.headline, "detail": i.detail} for i in self.insights],
             "next_steps": self.next_steps,
@@ -364,6 +365,22 @@ class Narrator:
         stats: dict[str, Any],
         patterns: list[Pattern],
         drift: DriftReport | None = None,
+        audit_log: Any | None = None,
+    ) -> NarrativeReport:
+        from receipt.pipeline.audit import AuditLogger
+
+        tx_count = stats.get("transaction_count", 0)
+        with AuditLogger(audit_log, "generate_narrative", tx_count) as al:
+            report = self._generate_narrative_impl(stats, patterns, drift, al)
+            al.output_rows = 0
+        return report
+
+    def _generate_narrative_impl(
+        self,
+        stats: dict[str, Any],
+        patterns: list[Pattern],
+        drift: DriftReport | None,
+        al: Any,
     ) -> NarrativeReport:
         client = anthropic.Anthropic(api_key=self._api_key)
         base_content = _build_prompt(stats, patterns, drift)
@@ -405,6 +422,7 @@ class Narrator:
                     next_steps=data.get("next_steps", ""),
                 )
                 self._validate_insight_quality(insights)
+                al.metadata["api_attempts"] = attempt + 1
                 return report
             except json.JSONDecodeError as exc:
                 logger.debug("Malformed JSON response (attempt %d): %s", attempt + 1, raw_text)
@@ -418,6 +436,7 @@ class Narrator:
                 if attempt < self.MAX_RETRIES - 1:
                     time.sleep(2 ** attempt)
 
+        al.metadata["api_attempts"] = self.MAX_RETRIES
         raise RuntimeError(
             f"Failed to generate narrative after {self.MAX_RETRIES} attempts: {last_exc}"
         )

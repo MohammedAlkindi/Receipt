@@ -192,3 +192,164 @@ class TestDriftDetector:
         df = pd.DataFrame(rows)
         report = DriftDetector().compare_periods(df, df)
         assert report.velocity_trend in ("stable", "accelerating", "decelerating")
+
+
+# ---------------------------------------------------------------------------
+# Task 8: configurability
+# ---------------------------------------------------------------------------
+
+class TestDeduplicateWindowDays:
+    def _near_dup_df(self) -> pd.DataFrame:
+        """Two rows with same description/amount, 1 day apart (near-duplicate)."""
+        return pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-04-01", "2026-04-02", "2026-04-10"]).tz_localize("UTC"),
+                "description": ["Coffee", "Coffee", "Gym"],
+                "amount": [-5.0, -5.0, -49.0],
+                "transaction_id": ["aaa", "bbb", "ccc"],
+                "raw_description": ["Coffee", "Coffee", "Gym"],
+                "source": ["chase", "chase", "chase"],
+            }
+        )
+
+    def test_dedup_window_zero_preserves_near_duplicates(self):
+        """window=0 must not remove near-duplicates (different transaction_ids)."""
+        from receipt.pipeline.cleaner import deduplicate
+
+        df = self._near_dup_df()
+        result = deduplicate(df, near_dup_window_days=0)
+        assert len(result) == 3  # all three rows kept
+
+    def test_dedup_window_two_removes_near_duplicate(self):
+        """Default window=2 removes Coffee on 2026-04-02 (1 day after 04-01)."""
+        from receipt.pipeline.cleaner import deduplicate
+
+        df = self._near_dup_df()
+        result = deduplicate(df, near_dup_window_days=2)
+        assert len(result) == 2  # 1 Coffee + Gym
+
+    def test_dedup_window_out_of_range_raises(self):
+        from receipt.pipeline.cleaner import deduplicate
+        import pytest
+
+        with pytest.raises(ValueError, match="near_dup_window_days"):
+            deduplicate(self._near_dup_df(), near_dup_window_days=8)
+
+
+class TestDriftDetectorThreshold:
+    def _make_categorized(self, amounts: dict[str, float]) -> pd.DataFrame:
+        rows = []
+        for merchant, amount in amounts.items():
+            rows.append(
+                {
+                    "date": pd.Timestamp("2026-04-10", tz="UTC"),
+                    "description": merchant,
+                    "amount": amount,
+                    "category": "food_dining",
+                    "transaction_id": f"t{hash(merchant)}",
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def test_high_threshold_produces_fewer_flags(self):
+        """threshold=0.50 flags less than threshold=0.05 for a 30% change."""
+        prev = self._make_categorized({"Uber Eats": -100.0})
+        curr = self._make_categorized({"Uber Eats": -130.0})  # 30% increase
+        strict = DriftDetector(drift_threshold=0.05).compare_periods(curr, prev)
+        lenient = DriftDetector(drift_threshold=0.50).compare_periods(curr, prev)
+        # 30% > 5% threshold → flagged; 30% < 50% threshold → not flagged
+        assert len(strict.increased) >= len(lenient.increased)
+
+    def test_invalid_threshold_raises(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="drift_threshold"):
+            DriftDetector(drift_threshold=1.5)
+
+
+# ---------------------------------------------------------------------------
+# Task 9: audit logging
+# ---------------------------------------------------------------------------
+
+class TestPipelineAuditLog:
+    def test_audit_log_captures_stage_events(self):
+        from receipt.pipeline.audit import PipelineAuditLog
+        from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
+        from datetime import datetime, timezone
+
+        audit_log = PipelineAuditLog(
+            run_id="test-run",
+            started_at=datetime.now(timezone.utc).isoformat(),
+        )
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-04-01", "2026-04-05"]).tz_localize("UTC"),
+                "description": ["Coffee", "Gym"],
+                "amount": [-5.0, -49.0],
+                "transaction_id": ["aaa", "bbb"],
+                "raw_description": ["Coffee", "Gym"],
+                "source": ["chase", "chase"],
+            }
+        )
+
+        normalize_descriptions(df, audit_log=audit_log)
+        deduplicate(df, audit_log=audit_log)
+        normalize_dates(df, audit_log=audit_log)
+
+        assert len(audit_log.stages) == 3
+        stages = [s.stage for s in audit_log.stages]
+        assert "normalize_descriptions" in stages
+        assert "deduplicate" in stages
+        assert "normalize_dates" in stages
+
+    def test_audit_log_to_dict_valid_json(self):
+        import json
+        from receipt.pipeline.audit import PipelineAuditLog
+        from receipt.pipeline.cleaner import normalize_descriptions
+        from datetime import datetime, timezone
+
+        audit_log = PipelineAuditLog(
+            run_id="r1",
+            started_at=datetime.now(timezone.utc).isoformat(),
+        )
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-04-01"]).tz_localize("UTC"),
+                "description": ["Coffee"],
+                "amount": [-5.0],
+                "transaction_id": ["aaa"],
+                "raw_description": ["Coffee"],
+                "source": ["chase"],
+            }
+        )
+        normalize_descriptions(df, audit_log=audit_log)
+
+        d = audit_log.to_dict()
+        serialized = json.dumps(d, default=str)
+        parsed = json.loads(serialized)
+        assert parsed["run_id"] == "r1"
+        assert len(parsed["stages"]) == 1
+        stage = parsed["stages"][0]
+        assert "stage" in stage
+        assert "duration_ms" in stage
+        assert "input_rows" in stage
+        assert "output_rows" in stage
+        assert "metadata" in stage
+
+    def test_audit_log_without_audit_log_arg_is_noop(self):
+        from receipt.pipeline.cleaner import normalize_descriptions
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-04-01"]).tz_localize("UTC"),
+                "description": ["Coffee"],
+                "amount": [-5.0],
+                "transaction_id": ["aaa"],
+                "raw_description": ["Coffee"],
+                "source": ["chase"],
+            }
+        )
+        # Must not raise when audit_log is omitted
+        result = normalize_descriptions(df)
+        assert len(result) == 1

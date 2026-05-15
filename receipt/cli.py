@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Optional
+
+logger = logging.getLogger(__name__)
 
 import typer
 from rich.console import Console
@@ -63,11 +66,19 @@ def _run_pipeline(
     save: bool,
     api_key: str | None,
     output: str,
+    dedup_window: int = 2,
+    drift_threshold: float = 0.20,
 ) -> None:
     _load_env()
     _verbose = output == "terminal"
     resolved_key = _get_api_key(api_key, verbose=_verbose)
     _progress_console = console if _verbose else Console(quiet=True)
+
+    from receipt.pipeline.audit import PipelineAuditLog
+    audit_log = PipelineAuditLog(
+        run_id=None,
+        started_at=datetime.now(timezone.utc).isoformat(),
+    )
 
     with Progress(
         SpinnerColumn(),
@@ -110,29 +121,29 @@ def _run_pipeline(
         progress.update(task, description="Cleaning data…")
         from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
 
-        df = normalize_descriptions(df)
-        df = deduplicate(df)
-        df = normalize_dates(df)
+        df = normalize_descriptions(df, audit_log=audit_log)
+        df = deduplicate(df, near_dup_window_days=dedup_window, audit_log=audit_log)
+        df = normalize_dates(df, audit_log=audit_log)
 
         # --- Categorize ---
         progress.update(task, description="Categorising transactions…")
         from receipt.pipeline.categorizer import SemanticCategorizer
 
         categorizer = SemanticCategorizer()
-        df = categorizer.categorize(df)
+        df = categorizer.categorize(df, audit_log=audit_log)
 
         # --- Anomalies ---
         progress.update(task, description="Detecting anomalies…")
         from receipt.analysis.anomalies import AnomalyDetector
 
         detector = AnomalyDetector()
-        df = detector.fit_predict(df)
+        df = detector.fit_predict(df, audit_log=audit_log)
 
         # --- Stats ---
         progress.update(task, description="Computing statistics…")
         from receipt.pipeline.aggregator import compute_stats
 
-        stats = compute_stats(df)
+        stats = compute_stats(df, audit_log=audit_log)
 
         # --- Patterns ---
         progress.update(task, description="Detecting patterns…")
@@ -150,7 +161,7 @@ def _run_pipeline(
             store = ReceiptStore()
             prev_df = store.get_previous_period(df["date"].min())
             if prev_df is not None and not prev_df.empty:
-                detector_drift = DriftDetector()
+                detector_drift = DriftDetector(drift_threshold=drift_threshold)
                 drift = detector_drift.compare_periods(df, prev_df)
             else:
                 if _verbose:
@@ -164,7 +175,7 @@ def _run_pipeline(
 
             narrator = Narrator(api_key=resolved_key)
             try:
-                narrative = narrator.generate_narrative(stats, patterns, drift)
+                narrative = narrator.generate_narrative(stats, patterns, drift, audit_log=audit_log)
             except Exception as exc:
                 if _verbose:
                     console.print(f"[warning]Narrative generation failed: {exc}[/warning]")
@@ -187,6 +198,10 @@ def _run_pipeline(
             store.upsert_merchants(df)
 
         progress.update(task, description="Done!")
+
+    # Emit structured audit log at INFO level
+    audit_log.run_id = run_id
+    logger.info("pipeline_audit %s", json.dumps(audit_log.to_dict(), default=str))
 
     # --- Render output ---
     if output == "json":
@@ -331,6 +346,12 @@ def analyze(
     ] = "terminal",
     save: Annotated[bool, typer.Option("--save", help="Save results to local DB")] = False,
     api_key: Annotated[Optional[str], typer.Option("--api-key", help="Anthropic API key")] = None,
+    dedup_window: Annotated[
+        int, typer.Option("--dedup-window", help="Near-duplicate window in days (0–7; 0 disables)")
+    ] = 2,
+    drift_threshold: Annotated[
+        float, typer.Option("--drift-threshold", help="Category drift threshold (0.0–1.0)")
+    ] = 0.20,
 ) -> None:
     """Analyze a bank transaction CSV and generate insights."""
     _load_env()
@@ -347,7 +368,15 @@ def analyze(
         console.print(f"[expense]Unknown format: {fmt}. Use auto|chase|bofa|plaid|generic[/expense]")
         raise typer.Exit(1)
 
-    _run_pipeline(file, fmt, period, compare, save, api_key, output)
+    if not 0 <= dedup_window <= 7:
+        console.print("[expense]--dedup-window must be between 0 and 7.[/expense]")
+        raise typer.Exit(1)
+
+    if not 0.0 <= drift_threshold <= 1.0:
+        console.print("[expense]--drift-threshold must be between 0.0 and 1.0.[/expense]")
+        raise typer.Exit(1)
+
+    _run_pipeline(file, fmt, period, compare, save, api_key, output, dedup_window, drift_threshold)
 
 
 @app.command()

@@ -13,8 +13,22 @@ from typing import Any
 import pandas as pd
 
 
-def compute_stats(df: pd.DataFrame) -> dict[str, Any]:
+def compute_stats(
+    df: pd.DataFrame,
+    audit_log: "Any | None" = None,
+) -> dict[str, Any]:
     """Compute a comprehensive stats dict from a categorized transaction DataFrame."""
+    from receipt.pipeline.audit import AuditLogger
+
+    with AuditLogger(audit_log, "compute_stats", len(df)) as al:
+        result = _compute_stats_impl(df)
+        al.output_rows = 0  # returns a dict, not rows
+        al.metadata["expense_count"] = result.get("expense_count", 0)
+        al.metadata["income_count"] = result.get("income_count", 0)
+    return result
+
+
+def _compute_stats_impl(df: pd.DataFrame) -> dict[str, Any]:
     expenses = df[df["amount"] < 0].copy()
     income = df[df["amount"] > 0].copy()
 

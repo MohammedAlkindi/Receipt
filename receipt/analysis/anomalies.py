@@ -22,8 +22,21 @@ class AnomalyDetector:
         self.contamination = contamination
         self.top_n = top_n
 
-    def fit_predict(self, df: pd.DataFrame) -> pd.DataFrame:
+    def fit_predict(
+        self,
+        df: pd.DataFrame,
+        audit_log: "Any | None" = None,
+    ) -> pd.DataFrame:
         """Return df with added columns: anomaly_score, is_anomaly, anomaly_reason."""
+        from receipt.pipeline.audit import AuditLogger
+
+        with AuditLogger(audit_log, "fit_predict", len(df)) as al:
+            result = self._fit_predict_impl(df)
+            al.output_rows = len(result)
+            al.metadata["anomalies_found"] = int(result["is_anomaly"].sum()) if "is_anomaly" in result.columns else 0
+        return result
+
+    def _fit_predict_impl(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         expenses = df[df["amount"] < 0].copy()
         if len(expenses) < 5:
@@ -55,7 +68,7 @@ class AnomalyDetector:
         return df
 
     def _build_features(self, df: pd.DataFrame) -> np.ndarray:
-        features = pd.DataFrame()
+        features = pd.DataFrame(index=df.index)
         features["amount_abs"] = df["amount"].abs()
         if "day_of_week" in df.columns:
             dow_map = {
@@ -66,6 +79,26 @@ class AnomalyDetector:
         else:
             features["dow"] = 0
         features["hour"] = df.get("hour", pd.Series(0, index=df.index))
+
+        # Category encoded: stable alphabetical integer encoding; "other" → -1
+        if "category" in df.columns:
+            unique_cats = sorted(c for c in df["category"].dropna().unique() if c != "other")
+            cat_index = {cat: i for i, cat in enumerate(unique_cats)}
+            features["category_encoded"] = (
+                df["category"].map(lambda c: cat_index.get(c, -1) if c != "other" else -1)
+            )
+        else:
+            features["category_encoded"] = -1
+
+        # Days since previous transaction (sorted by date); first row = 0
+        df_sorted = df.sort_values("date") if "date" in df.columns else df
+        if "date" in df_sorted.columns:
+            prev_date = df_sorted["date"].shift(1)
+            gap = (df_sorted["date"] - prev_date).dt.total_seconds().div(86400).fillna(0)
+            features["days_since_prev"] = gap.reindex(features.index).fillna(0)
+        else:
+            features["days_since_prev"] = 0
+
         return features.fillna(0).values
 
     def _compute_scores(self, X: np.ndarray) -> np.ndarray:

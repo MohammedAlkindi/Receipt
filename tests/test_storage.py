@@ -111,3 +111,83 @@ class TestReceiptStore:
         assert "transactions" in stats
         assert "analysis_runs" in stats
         assert "merchants" in stats
+
+    def test_merchant_first_seen_unchanged_on_double_upsert(self, store, sample_df):
+        sample_with_cat = sample_df.copy()
+        sample_with_cat["category"] = "food_dining"
+        store.upsert_merchants(sample_with_cat)
+        first_call = {m["name"]: m for m in store.get_merchants()}
+        store.upsert_merchants(sample_with_cat)
+        second_call = {m["name"]: m for m in store.get_merchants()}
+        for name in first_call:
+            assert first_call[name]["first_seen"] == second_call[name]["first_seen"]
+
+    def test_upsert_merchants_no_unique_constraint_error(self, store, sample_df):
+        sample_with_cat = sample_df.copy()
+        sample_with_cat["category"] = "food_dining"
+        # Calling three times must not raise
+        store.upsert_merchants(sample_with_cat)
+        store.upsert_merchants(sample_with_cat)
+        store.upsert_merchants(sample_with_cat)
+        merchants = store.get_merchants()
+        assert len(merchants) > 0
+
+
+class TestNarrativeDeserialization:
+    def test_schema_version_1_returns_as_is(self):
+        from receipt.storage.store import _deserialize_narrative
+
+        data = {"schema_version": 1, "tldr": "x", "insights": [], "next_steps": "y"}
+        result = _deserialize_narrative(data)
+        assert result == data
+
+    def test_legacy_schema_version_0_returns_without_error(self):
+        from receipt.storage.store import _deserialize_narrative
+
+        data = {"tldr": "x", "insights": [], "next_steps": "y"}
+        result = _deserialize_narrative(data)
+        assert result["tldr"] == "x"
+        assert isinstance(result["insights"], list)
+
+    def test_future_schema_version_returns_as_is(self):
+        from receipt.storage.store import _deserialize_narrative
+
+        data = {"schema_version": 99, "tldr": "x", "insights": [], "next_steps": "y"}
+        result = _deserialize_narrative(data)
+        assert result["tldr"] == "x"
+
+    def test_narrative_to_dict_includes_schema_version(self):
+        from receipt.analysis.narrator import Insight, NarrativeReport
+
+        report = NarrativeReport(
+            tldr="Test",
+            insights=[Insight(headline="h", detail="d")],
+            next_steps="do it",
+        )
+        d = report.to_dict()
+        assert d["schema_version"] == 1
+
+    def test_get_analysis_run_handles_legacy_narrative(self, tmp_path):
+        import json
+        from receipt.storage.store import ReceiptStore
+        from datetime import datetime, timezone
+
+        store = ReceiptStore(db_path=tmp_path / "legacy.db")
+        # Manually save a run with a legacy narrative (no schema_version)
+        legacy_narrative = json.dumps({"tldr": "old", "insights": [], "next_steps": "none"})
+        from sqlalchemy.orm import Session
+        from receipt.storage.models import AnalysisRun
+        with Session(store._engine) as session:
+            run = AnalysisRun(
+                run_id="legacyrun01",
+                created_at=datetime.now(timezone.utc),
+                period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                period_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+                transaction_count=5,
+                narrative_json=legacy_narrative,
+            )
+            session.add(run)
+            session.commit()
+        result = store.get_analysis_run("legacyrun01")
+        assert result is not None
+        assert result["narrative"]["tldr"] == "old"

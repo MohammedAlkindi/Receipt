@@ -84,11 +84,41 @@ cp .env.example .env
 
 ---
 
+## Database Migrations
+
+receipt uses [Alembic](https://alembic.sqlalchemy.org/) to manage schema migrations. You must run migrations once after installation and again after each upgrade:
+
+```bash
+# After first install
+alembic upgrade head
+
+# After upgrading receipt (e.g. via pip install --upgrade receipt)
+alembic upgrade head
+```
+
+By default the database lives at `~/.receipt/receipt.db`. Override this with the `RECEIPT_DB_PATH` environment variable:
+
+```bash
+RECEIPT_DB_PATH=/data/my_finances.db alembic upgrade head
+```
+
+Check which revision is currently applied:
+
+```bash
+alembic history          # show all revisions
+alembic current          # show applied revision
+```
+
+---
+
 ## Quick Start
 
 ```bash
 # Step 1: install (required before any receipt command works)
 pip install -e .
+
+# Step 2: apply database schema (required once after install)
+alembic upgrade head
 
 # Try the bundled Chase sample — no API key, no model download
 receipt demo

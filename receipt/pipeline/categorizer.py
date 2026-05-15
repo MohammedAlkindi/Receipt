@@ -131,8 +131,21 @@ class SemanticCategorizer:
         self._seed_embeddings = {k: np.array(v) for k, v in data.items()}
         return True
 
-    def categorize(self, df: pd.DataFrame) -> pd.DataFrame:
+    def categorize(
+        self,
+        df: pd.DataFrame,
+        audit_log: "PipelineAuditLog | None" = None,
+    ) -> pd.DataFrame:
         """Return df with added columns: category, category_confidence, cluster_id."""
+        from receipt.pipeline.audit import AuditLogger
+
+        with AuditLogger(audit_log, "categorize", len(df)) as al:
+            result = self._categorize_impl(df)
+            al.output_rows = len(result)
+            al.metadata["use_embeddings"] = self._use_embeddings
+        return result
+
+    def _categorize_impl(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
 
         if self._use_embeddings:

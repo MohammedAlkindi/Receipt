@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import base64
 import io
+import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 import anyio
 from fastapi import FastAPI, Header, HTTPException, Request, status
@@ -71,6 +75,8 @@ class AnalyzeRequest(BaseModel):
     file_content: str  # base64-encoded CSV
     format: str = "auto"  # auto|chase|bofa|plaid|generic
     period: int = 30  # days
+    dedup_window_days: int = 2  # near-duplicate window (0–7)
+    drift_threshold: float = 0.20  # category drift flag threshold (0.0–1.0)
 
 
 class InsightModel(BaseModel):
@@ -99,14 +105,51 @@ class AnalyzeResponse(BaseModel):
     patterns: list[PatternModel]
     drift: Optional[dict[str, Any]]
     narrative: Optional[NarrativeModel]
+    audit_log: Optional[dict[str, Any]] = None
+
+
+class HealthResponse(BaseModel):
+    status: str
+    db: dict[str, int]
+    version: str
+    narrative_service: str
+
+
+class AnalysisRunSummary(BaseModel):
+    run_id: str
+    created_at: str
+    period_start: str
+    period_end: str
+    source_file: Optional[str]
+    transaction_count: int
+    tldr: Optional[str]
+
+
+class AnalysisRunDetail(BaseModel):
+    run_id: str
+    created_at: str
+    period_start: str
+    period_end: str
+    source_file: Optional[str]
+    transaction_count: int
+    narrative: Optional[NarrativeModel]
+
+
+class MerchantSummary(BaseModel):
+    name: str
+    category: Optional[str]
+    total_spent: float
+    transaction_count: int
+    first_seen: Optional[str]
+    last_seen: Optional[str]
 
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/health", tags=["meta"])
-async def health() -> dict[str, Any]:
+@app.get("/health", tags=["meta"], response_model=HealthResponse)
+async def health() -> HealthResponse:
     """Return service status and DB stats."""
     try:
         from receipt.storage.store import ReceiptStore
@@ -117,12 +160,12 @@ async def health() -> dict[str, Any]:
     except Exception as exc:
         db_stats = {}
         status_val = f"degraded: {exc}"
-    return {
-        "status": status_val,
-        "db": db_stats,
-        "version": "0.1.0",
-        "narrative_service": "unknown",
-    }
+    return HealthResponse(
+        status=status_val,
+        db=db_stats,
+        version="0.1.0",
+        narrative_service="unknown",
+    )
 
 
 @app.post("/analyze", response_model=AnalyzeResponse, tags=["analysis"])
@@ -190,24 +233,31 @@ async def analyze(
     from receipt.analysis.narrator import Narrator
     from receipt.analysis.patterns import detect_patterns
     from receipt.pipeline.aggregator import compute_stats
+    from receipt.pipeline.audit import PipelineAuditLog
     from receipt.pipeline.categorizer import SemanticCategorizer
     from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
 
+    audit_log = PipelineAuditLog(
+        run_id=None,
+        started_at=datetime.now(timezone.utc).isoformat(),
+    )
+
     _df = [df]
-    _df[0] = await anyio.to_thread.run_sync(lambda: normalize_descriptions(_df[0]))
-    _df[0] = await anyio.to_thread.run_sync(lambda: deduplicate(_df[0]))
-    _df[0] = await anyio.to_thread.run_sync(lambda: normalize_dates(_df[0]))
-    _df[0] = await anyio.to_thread.run_sync(lambda: SemanticCategorizer().categorize(_df[0]))
-    _df[0] = await anyio.to_thread.run_sync(lambda: AnomalyDetector().fit_predict(_df[0]))
+    _dedup_window = request.dedup_window_days
+    _df[0] = await anyio.to_thread.run_sync(lambda: normalize_descriptions(_df[0], audit_log=audit_log))
+    _df[0] = await anyio.to_thread.run_sync(lambda: deduplicate(_df[0], near_dup_window_days=_dedup_window, audit_log=audit_log))
+    _df[0] = await anyio.to_thread.run_sync(lambda: normalize_dates(_df[0], audit_log=audit_log))
+    _df[0] = await anyio.to_thread.run_sync(lambda: SemanticCategorizer().categorize(_df[0], audit_log=audit_log))
+    _df[0] = await anyio.to_thread.run_sync(lambda: AnomalyDetector().fit_predict(_df[0], audit_log=audit_log))
     df = _df[0]
 
-    stats = await anyio.to_thread.run_sync(lambda: compute_stats(df))
+    stats = await anyio.to_thread.run_sync(lambda: compute_stats(df, audit_log=audit_log))
     patterns = await anyio.to_thread.run_sync(lambda: detect_patterns(df))
 
     # Narrative
     narrator = Narrator(api_key=x_api_key)
     try:
-        narrative_report = narrator.generate_narrative(stats, patterns)
+        narrative_report = narrator.generate_narrative(stats, patterns, audit_log=audit_log)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -226,6 +276,9 @@ async def analyze(
     )
     store.save_transactions(df, run_id)
     store.upsert_merchants(df)
+
+    audit_log.run_id = run_id
+    logger.info("pipeline_audit %s", json.dumps(audit_log.to_dict(), default=str))
 
     narrative_model = NarrativeModel(
         tldr=narrative_report.tldr,
@@ -246,20 +299,27 @@ async def analyze(
         patterns=pattern_models,
         drift=None,
         narrative=narrative_model,
+        audit_log=audit_log.to_dict(),
     )
 
 
-@app.get("/history", tags=["history"])
-async def get_history() -> list[dict[str, Any]]:
+@app.get("/history", tags=["history"], response_model=list[AnalysisRunSummary])
+async def get_history() -> list[AnalysisRunSummary]:
     """Return a list of past analysis run summaries."""
     from receipt.storage.store import ReceiptStore
 
     store = ReceiptStore()
-    return await anyio.to_thread.run_sync(lambda: store.get_analysis_history())
+    rows = await anyio.to_thread.run_sync(lambda: store.get_analysis_history())
+    return [AnalysisRunSummary(**r) for r in rows]
 
 
-@app.get("/history/{run_id}", tags=["history"])
-async def get_run(run_id: str) -> dict[str, Any]:
+@app.get(
+    "/history/{run_id}",
+    tags=["history"],
+    response_model=AnalysisRunDetail,
+    responses={404: {"description": "Run not found"}},
+)
+async def get_run(run_id: str) -> AnalysisRunDetail:
     """Return the full details of a specific analysis run."""
     from receipt.storage.store import ReceiptStore
 
@@ -267,13 +327,31 @@ async def get_run(run_id: str) -> dict[str, Any]:
     run = store.get_analysis_run(run_id)
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
-    return run
+    narrative_raw = run.get("narrative")
+    narrative_model: NarrativeModel | None = None
+    if narrative_raw:
+        narrative_model = NarrativeModel(
+            tldr=narrative_raw.get("tldr", ""),
+            insights=[InsightModel(**i) for i in narrative_raw.get("insights", [])],
+            next_steps=narrative_raw.get("next_steps", ""),
+            generated_at=narrative_raw.get("generated_at", ""),
+        )
+    return AnalysisRunDetail(
+        run_id=run["run_id"],
+        created_at=run["created_at"],
+        period_start=run["period_start"],
+        period_end=run["period_end"],
+        source_file=run.get("source_file"),
+        transaction_count=run["transaction_count"],
+        narrative=narrative_model,
+    )
 
 
-@app.get("/merchants", tags=["data"])
-async def get_merchants(limit: int = 30) -> list[dict[str, Any]]:
+@app.get("/merchants", tags=["data"], response_model=list[MerchantSummary])
+async def get_merchants(limit: int = 30) -> list[MerchantSummary]:
     """Return top merchants by total spend."""
     from receipt.storage.store import ReceiptStore
 
     store = ReceiptStore()
-    return await anyio.to_thread.run_sync(lambda: store.get_merchants(limit=limit))
+    rows = await anyio.to_thread.run_sync(lambda: store.get_merchants(limit=limit))
+    return [MerchantSummary(**r) for r in rows]

@@ -59,6 +59,34 @@ class TestGenericCSVParser:
         df2 = GenericCSVParser().parse(io.StringIO(csv))
         assert df1["transaction_id"].iloc[0] == df2["transaction_id"].iloc[0]
 
+    def test_amount_takes_precedence_over_debit_credit_logs_warning(self, caplog):
+        """Task 4: CSV with both amount and debit/credit logs a warning."""
+        import logging
+
+        csv = "date,description,amount,debit,credit\n2026-01-01,Coffee,-4.50,4.50,\n"
+        with caplog.at_level(logging.WARNING, logger="receipt.ingestion.csv_parser"):
+            df = GenericCSVParser().parse(io.StringIO(csv))
+        assert df["amount"].iloc[0] == pytest.approx(-4.50)
+        assert any(
+            "amount" in rec.message and "takes precedence" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_zero_row_csv_raises_parse_error(self):
+        """Task 4: A CSV with only a header raises ParseError."""
+        csv = "date,description,amount\n"
+        with pytest.raises(ParseError, match="no data rows"):
+            GenericCSVParser().parse(io.StringIO(csv))
+
+    def test_exact_match_before_partial_match(self):
+        """Task 4: 'Transaction Date' exact match preferred over 'date_of_posting' partial."""
+        # 'Transaction Date' is in _DATE_VARIANTS (exact); 'date_of_posting' would only
+        # match as a partial. Exact match must win.
+        csv = "date_of_posting,Transaction Date,description,amount\n2026-01-15,2026-01-01,Coffee,-4.50\n"
+        df = GenericCSVParser().parse(io.StringIO(csv))
+        # The 'Transaction Date' column has 2026-01-01 — confirm that date was used
+        assert df["date"].iloc[0].day == 1
+
 
 # ---------------------------------------------------------------------------
 # ChaseParser

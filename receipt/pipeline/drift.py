@@ -38,7 +38,14 @@ class DriftReport:
 class DriftDetector:
     """Compare two transaction DataFrames and surface behavioral changes."""
 
-    DRIFT_THRESHOLD = 0.20  # 20% change triggers a flag
+    DRIFT_THRESHOLD = 0.20  # kept for backwards-compatible class-level access
+
+    def __init__(self, drift_threshold: float = 0.20) -> None:
+        if not 0.0 <= drift_threshold <= 1.0:
+            raise ValueError(
+                f"drift_threshold must be between 0.0 and 1.0, got {drift_threshold}"
+            )
+        self.drift_threshold = drift_threshold
 
     def compare_periods(
         self, df_current: pd.DataFrame, df_previous: pd.DataFrame
@@ -74,13 +81,13 @@ class DriftDetector:
                 "previous": round(prev_val, 2),
                 "change_pct": round(change * 100, 1),
             }
-            if change > self.DRIFT_THRESHOLD:
+            if change > self.drift_threshold:
                 report.increased[cat] = detail
                 report.narrative_hints.append(
                     f"{cat} spending rose {detail['change_pct']}% "
                     f"(${detail['previous']} → ${detail['current']})"
                 )
-            elif change < -self.DRIFT_THRESHOLD:
+            elif change < -self.drift_threshold:
                 report.decreased[cat] = detail
                 report.narrative_hints.append(
                     f"{cat} spending fell {abs(detail['change_pct'])}% "
