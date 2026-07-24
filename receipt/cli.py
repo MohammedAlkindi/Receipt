@@ -524,15 +524,30 @@ def export(
 
 @app.command()
 def serve(
-    port: Annotated[int, typer.Option("--port", help="Port to listen on")] = 8000,
-    host: Annotated[str, typer.Option("--host", help="Host to bind")] = "0.0.0.0",
+    port: Annotated[Optional[int], typer.Option("--port", help="Port to listen on")] = None,
+    host: Annotated[Optional[str], typer.Option("--host", help="Host to bind")] = None,
 ) -> None:
-    """Start the FastAPI REST server."""
+    """Start the FastAPI REST server.
+
+    Binds to 127.0.0.1 by default — the server has no authentication unless
+    RECEIPT_API_TOKEN is set, so it must not be exposed to a network without
+    an explicit --host / RECEIPT_API_HOST. Override host/port via the
+    RECEIPT_API_HOST and RECEIPT_API_PORT environment variables.
+    """
     try:
         import uvicorn
     except ImportError:
         console.print("[expense]uvicorn not installed. Run: pip install uvicorn[/expense]")
         raise typer.Exit(1)
 
-    console.print(f"[info]Starting receipt API on http://{host}:{port}[/info]")
-    uvicorn.run("receipt.api.server:app", host=host, port=port, reload=False)
+    resolved_host = host or os.environ.get("RECEIPT_API_HOST", "127.0.0.1")
+    resolved_port = port or int(os.environ.get("RECEIPT_API_PORT", "8000"))
+
+    if resolved_host not in ("127.0.0.1", "localhost"):
+        console.print(
+            f"[warning]Binding to {resolved_host}: the API has no auth unless "
+            "RECEIPT_API_TOKEN is set. Anyone who can reach this host can read and "
+            "write your financial data.[/warning]"
+        )
+    console.print(f"[info]Starting receipt API on http://{resolved_host}:{resolved_port}[/info]")
+    uvicorn.run("receipt.api.server:app", host=resolved_host, port=resolved_port, reload=False)

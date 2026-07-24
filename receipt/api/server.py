@@ -12,14 +12,89 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 import anyio
-from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from receipt import configure_logging
 
 logger = logging.getLogger(__name__)
+
+_MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+class _MaxBodySizeMiddleware:
+    """Reject request bodies larger than *max_bytes*.
+
+    Counts the actual streamed bytes rather than trusting the Content-Length
+    header, which a chunked-transfer client can omit. Buffering is bounded by
+    *max_bytes* (rejection fires the moment the running total exceeds it), so
+    this never accumulates an unbounded body in memory.
+    """
+
+    def __init__(self, app: Any, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        for name, value in scope.get("headers") or []:
+            if name == b"content-length":
+                try:
+                    if int(value) > self.max_bytes:
+                        await self._send_413(send)
+                        return
+                except ValueError:
+                    pass
+                break
+
+        chunks: list[bytes] = []
+        total = 0
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                await self.app(scope, lambda: _disconnect_message(), send)
+                return
+            body = message.get("body", b"")
+            total += len(body)
+            if total > self.max_bytes:
+                await self._send_413(send)
+                return
+            chunks.append(body)
+            more_body = message.get("more_body", False)
+
+        buffered = b"".join(chunks)
+        replayed = False
+
+        async def replay() -> Any:
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": buffered, "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+    @staticmethod
+    async def _send_413(send: Any) -> None:
+        response = JSONResponse(
+            status_code=413,
+            content={"detail": "Request body too large. Maximum 10MB."},
+        )
+        await response({"type": "http"}, _empty_receive, send)
+
+
+async def _empty_receive() -> Any:
+    return {"type": "http.request", "body": b"", "more_body": False}
+
+
+async def _disconnect_message() -> Any:
+    return {"type": "http.disconnect"}
 
 
 @asynccontextmanager
@@ -37,30 +112,31 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(_MaxBodySizeMiddleware, max_bytes=_MAX_BODY_BYTES)
 
-_RECEIPT_TOKEN: str | None = os.getenv("RECEIPT_API_TOKEN")
-_MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB
-
-
-@app.middleware("http")
-async def limit_body_size(request: Request, call_next: Callable[..., Any]) -> Any:
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > _MAX_BODY_BYTES:
-        return JSONResponse(
-            status_code=413,
-            content={"detail": "Request body too large. Maximum 10MB."},
-        )
-    return await call_next(request)
+# CORS is disabled unless explicitly configured. allow_origins=["*"] previously
+# let any web page in the operator's browser read /history and /merchants.
+# Opt in per-deployment with RECEIPT_CORS_ORIGINS (comma-separated origins).
+_cors_origins = [
+    o.strip() for o in os.getenv("RECEIPT_CORS_ORIGINS", "").split(",") if o.strip()
+]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
-def _require_receipt_token(x_receipt_token: Optional[str] = Header(None)) -> None:
-    if _RECEIPT_TOKEN and x_receipt_token != _RECEIPT_TOKEN:
+def _require_receipt_token(x_receipt_token: str | None = Header(None)) -> None:
+    """Enforce X-Receipt-Token when RECEIPT_API_TOKEN is configured.
+
+    The env var is read at call time (not import time) so setting it actually
+    protects the running server, and so tests can toggle it per-case.
+    """
+    expected = os.getenv("RECEIPT_API_TOKEN")
+    if expected and x_receipt_token != expected:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing X-Receipt-Token.",
@@ -168,7 +244,12 @@ async def health() -> HealthResponse:
     )
 
 
-@app.post("/analyze", response_model=AnalyzeResponse, tags=["analysis"])
+@app.post(
+    "/analyze",
+    response_model=AnalyzeResponse,
+    tags=["analysis"],
+    dependencies=[Depends(_require_receipt_token)],
+)
 async def analyze(
     request: AnalyzeRequest,
     x_api_key: str = Header(..., description="Anthropic API key"),
@@ -303,7 +384,12 @@ async def analyze(
     )
 
 
-@app.get("/history", tags=["history"], response_model=list[AnalysisRunSummary])
+@app.get(
+    "/history",
+    tags=["history"],
+    response_model=list[AnalysisRunSummary],
+    dependencies=[Depends(_require_receipt_token)],
+)
 async def get_history() -> list[AnalysisRunSummary]:
     """Return a list of past analysis run summaries."""
     from receipt.storage.store import ReceiptStore
@@ -318,6 +404,7 @@ async def get_history() -> list[AnalysisRunSummary]:
     tags=["history"],
     response_model=AnalysisRunDetail,
     responses={404: {"description": "Run not found"}},
+    dependencies=[Depends(_require_receipt_token)],
 )
 async def get_run(run_id: str) -> AnalysisRunDetail:
     """Return the full details of a specific analysis run."""
@@ -347,8 +434,13 @@ async def get_run(run_id: str) -> AnalysisRunDetail:
     )
 
 
-@app.get("/merchants", tags=["data"], response_model=list[MerchantSummary])
-async def get_merchants(limit: int = 30) -> list[MerchantSummary]:
+@app.get(
+    "/merchants",
+    tags=["data"],
+    response_model=list[MerchantSummary],
+    dependencies=[Depends(_require_receipt_token)],
+)
+async def get_merchants(limit: int = Query(30, ge=1, le=500)) -> list[MerchantSummary]:
     """Return top merchants by total spend."""
     from receipt.storage.store import ReceiptStore
 

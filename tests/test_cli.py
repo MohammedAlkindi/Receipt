@@ -458,6 +458,69 @@ class TestAPIResponseModels:
         assert items[0]["run_id"] == "r1"
 
 
+class TestAPISecurity:
+    def test_token_enforced_when_configured(self, mocker, monkeypatch):
+        """H5 regression: with RECEIPT_API_TOKEN set, data routes reject a
+        request that lacks (or mismatches) the X-Receipt-Token header."""
+        from fastapi.testclient import TestClient
+
+        from receipt.api.server import app as fastapi_app
+
+        monkeypatch.setenv("RECEIPT_API_TOKEN", "s3cret")
+        mocker.patch(
+            "receipt.storage.store.ReceiptStore",
+            return_value=mocker.MagicMock(
+                get_analysis_history=mocker.MagicMock(return_value=[])
+            ),
+        )
+        client = TestClient(fastapi_app)
+
+        assert client.get("/history").status_code == 401
+        assert client.get("/history", headers={"X-Receipt-Token": "wrong"}).status_code == 401
+        assert client.get("/history", headers={"X-Receipt-Token": "s3cret"}).status_code == 200
+
+    def test_health_open_without_token(self, mocker, monkeypatch):
+        """/health stays open as a liveness probe even when a token is set."""
+        from fastapi.testclient import TestClient
+
+        from receipt.api.server import app as fastapi_app
+
+        monkeypatch.setenv("RECEIPT_API_TOKEN", "s3cret")
+        mocker.patch(
+            "receipt.storage.store.ReceiptStore",
+            return_value=mocker.MagicMock(
+                db_stats=mocker.MagicMock(
+                    return_value={"transactions": 0, "analysis_runs": 0, "merchants": 0}
+                )
+            ),
+        )
+        client = TestClient(fastapi_app)
+        assert client.get("/health").status_code == 200
+
+    def test_body_cap_counts_streamed_bytes(self, monkeypatch):
+        """H5 regression: an oversized body with NO Content-Length header
+        (chunked transfer) is still rejected with 413."""
+        from fastapi.testclient import TestClient
+
+        from receipt.api.server import app as fastapi_app
+
+        monkeypatch.delenv("RECEIPT_API_TOKEN", raising=False)
+        client = TestClient(fastapi_app)
+
+        def chunked_body():
+            # 11 MB streamed in 1 MB chunks; httpx omits Content-Length for a
+            # generator body, forcing chunked transfer encoding.
+            for _ in range(11):
+                yield b"x" * (1024 * 1024)
+
+        resp = client.post(
+            "/analyze",
+            content=chunked_body(),
+            headers={"X-Api-Key": "sk-ant-test", "Content-Type": "application/json"},
+        )
+        assert resp.status_code == 413
+
+
 # ---------------------------------------------------------------------------
 # serve
 # ---------------------------------------------------------------------------
@@ -469,5 +532,29 @@ class TestServe:
         result = runner.invoke(app, ["serve", "--port", "9000"])
         assert result.exit_code == 0
         uvicorn_mock.run.assert_called_once_with(
-            "receipt.api.server:app", host="0.0.0.0", port=9000, reload=False
+            "receipt.api.server:app", host="127.0.0.1", port=9000, reload=False
         )
+
+    def test_serve_defaults_to_loopback(self, mocker, monkeypatch):
+        """H5 regression: serve must bind loopback by default, not 0.0.0.0."""
+        monkeypatch.delenv("RECEIPT_API_HOST", raising=False)
+        monkeypatch.delenv("RECEIPT_API_PORT", raising=False)
+        uvicorn_mock = mocker.MagicMock()
+        mocker.patch.dict("sys.modules", {"uvicorn": uvicorn_mock})
+        result = runner.invoke(app, ["serve"])
+        assert result.exit_code == 0
+        _, kwargs = uvicorn_mock.run.call_args
+        assert kwargs["host"] == "127.0.0.1"
+        assert kwargs["port"] == 8000
+
+    def test_serve_honors_env_host_port(self, mocker, monkeypatch):
+        """H5 regression: RECEIPT_API_HOST/PORT override the defaults."""
+        monkeypatch.setenv("RECEIPT_API_HOST", "127.0.0.1")
+        monkeypatch.setenv("RECEIPT_API_PORT", "7777")
+        uvicorn_mock = mocker.MagicMock()
+        mocker.patch.dict("sys.modules", {"uvicorn": uvicorn_mock})
+        result = runner.invoke(app, ["serve"])
+        assert result.exit_code == 0
+        _, kwargs = uvicorn_mock.run.call_args
+        assert kwargs["host"] == "127.0.0.1"
+        assert kwargs["port"] == 7777
