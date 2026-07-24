@@ -298,10 +298,13 @@ def _build_prompt(
         if drift.velocity_trend != "stable":
             parts.append(f"- Spending velocity: {drift.velocity_trend}")
         for cat, detail in drift.increased.items():
-            parts.append(
-                f"- {cat} UP {detail['change_pct']}%: "
-                f"${detail['previous']} → ${detail['current']}"
-            )
+            if detail.get("change_pct") is None:
+                parts.append(f"- {cat} NEW this period: ${detail['current']}")
+            else:
+                parts.append(
+                    f"- {cat} UP {detail['change_pct']}%: "
+                    f"${detail['previous']} → ${detail['current']}"
+                )
         for cat, detail in drift.decreased.items():
             parts.append(
                 f"- {cat} DOWN {abs(detail['change_pct'])}%: "

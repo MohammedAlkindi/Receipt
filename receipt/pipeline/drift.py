@@ -74,6 +74,19 @@ class DriftDetector:
             curr_val = cat_curr.get(cat, 0.0)
             prev_val = cat_prev.get(cat, 0.0)
             if prev_val == 0:
+                # Brand-new category with no prior spend — the strongest
+                # possible drift signal. Report it instead of silently
+                # skipping (percent change is undefined, hence change_pct=None).
+                if curr_val > 0:
+                    detail = {
+                        "current": round(curr_val, 2),
+                        "previous": 0.0,
+                        "change_pct": None,
+                    }
+                    report.increased[cat] = detail
+                    report.narrative_hints.append(
+                        f"{cat} is new this period (${detail['current']})"
+                    )
                 continue
             change = (curr_val - prev_val) / abs(prev_val)
             detail = {

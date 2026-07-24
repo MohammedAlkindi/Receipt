@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -10,6 +12,7 @@ from receipt.analysis.anomalies import AnomalyDetector
 from receipt.analysis.patterns import (
     Pattern,
     _anomalous_week,
+    _income_irregularity,
     _late_night_spending,
     _subscription_creep,
     _weekend_splurge,
@@ -118,6 +121,34 @@ class TestAnomalousWeek:
 # ---------------------------------------------------------------------------
 # detect_patterns (integration)
 # ---------------------------------------------------------------------------
+
+class TestIncomeIrregularity:
+    def _income(self, dates: list[str]) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "date": pd.to_datetime(dates).tz_localize("UTC"),
+                "description": ["Payroll"] * len(dates),
+                "amount": [2000.0] * len(dates),
+                "category": ["income"] * len(dates),
+                "transaction_id": [f"i{i}" for i in range(len(dates))],
+            }
+        )
+
+    def test_two_deposits_returns_none_not_nan(self):
+        """M5 regression: two deposits produced a NaN stdev pattern that
+        rendered '±nan days' and serialized non-JSON NaN. Must be None now."""
+        result = _income_irregularity(self._income(["2026-04-01", "2026-04-15"]))
+        assert result is None
+
+    def test_three_irregular_deposits_flagged_with_finite_std(self):
+        result = _income_irregularity(
+            self._income(["2026-04-01", "2026-04-05", "2026-04-28"])
+        )
+        assert result is not None
+        assert not math.isnan(result.data["std_gap_days"])
+        # Pattern data must be JSON-serializable (no NaN).
+        json.dumps(result.data)
+
 
 class TestDetectPatterns:
     def test_returns_list(self, sample_df):

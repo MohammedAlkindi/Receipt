@@ -219,6 +219,43 @@ class TestDriftDetector:
         report = DriftDetector().compare_periods(curr, prev)
         assert "Grubhub" in report.dropped_merchants
 
+    def test_reports_brand_new_category(self):
+        """M5 regression: a category with zero prior spend must be reported as
+        new, not silently skipped."""
+        prev = pd.DataFrame(
+            [
+                {
+                    "date": pd.Timestamp("2026-03-10", tz="UTC"),
+                    "description": "Chipotle",
+                    "amount": -50.0,
+                    "category": "food_dining",
+                    "transaction_id": "p1",
+                }
+            ]
+        )
+        curr = pd.DataFrame(
+            [
+                {
+                    "date": pd.Timestamp("2026-04-10", tz="UTC"),
+                    "description": "Chipotle",
+                    "amount": -50.0,
+                    "category": "food_dining",
+                    "transaction_id": "c1",
+                },
+                {
+                    "date": pd.Timestamp("2026-04-11", tz="UTC"),
+                    "description": "Delta Airlines",
+                    "amount": -500.0,
+                    "category": "transportation",
+                    "transaction_id": "c2",
+                },
+            ]
+        )
+        report = DriftDetector().compare_periods(curr, prev)
+        assert "transportation" in report.increased
+        assert report.increased["transportation"]["change_pct"] is None
+        assert any("new this period" in h for h in report.narrative_hints)
+
     def test_velocity_stable_with_equal_spending(self):
         rows = [
             {

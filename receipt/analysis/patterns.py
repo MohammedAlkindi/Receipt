@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -185,14 +186,17 @@ def _income_irregularity(df: pd.DataFrame) -> Pattern | None:
         return None
     income_mask = (df["category"] == "income") | (df["amount"] > 0)
     income = df[income_mask & (df["amount"] > 0)].copy()
-    if len(income) < 2:
+    # Need at least 3 deposits: 2 deposits yield a single gap whose stdev is
+    # NaN, which slipped past the threshold and emitted "±nan days" (and
+    # non-JSON-serializable NaN in the pattern data).
+    if len(income) < 3:
         return None
     income = income.sort_values("date")
     gaps = income["date"].diff().dt.days.dropna()
     avg_gap = float(gaps.mean())
     std_gap = float(gaps.std())
-    # Irregular if std > 5 days
-    if std_gap < 5:
+    # Irregular if std > 5 days (guard against a NaN stdev defensively).
+    if math.isnan(std_gap) or std_gap < 5:
         return None
     return Pattern(
         type="INCOME_IRREGULARITY",
