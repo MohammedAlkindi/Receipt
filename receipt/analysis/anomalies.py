@@ -49,21 +49,29 @@ class AnomalyDetector:
         scores = self._compute_scores(features)
 
         df["anomaly_score"] = 0.0
+        df["is_anomaly"] = False
+        df["anomaly_reason"] = ""
+
+        # Identical raw scores (uniform spending) would min-max normalize to
+        # all zeros, making the percentile threshold 0 and flagging every row.
+        if np.isclose(scores.max(), scores.min()):
+            return df
+
         df.loc[expenses.index, "anomaly_score"] = scores
 
         threshold = float(np.percentile(scores, (1 - self.contamination) * 100))
         df["is_anomaly"] = df["anomaly_score"] >= threshold
 
-        # Label top anomalies with reasons
-        df["anomaly_reason"] = ""
+        # Attach reasons to the top-scored anomalies; never flag a row the
+        # threshold itself did not flag.
         top_idx = expenses.loc[
             expenses.index[np.argsort(scores)[-self.top_n :]]
         ].index
         for idx in top_idx:
+            if not df.at[idx, "is_anomaly"]:
+                continue
             row = df.loc[idx]
-            reason = self._explain(row, expenses)
-            df.at[idx, "anomaly_reason"] = reason
-            df.at[idx, "is_anomaly"] = True
+            df.at[idx, "anomaly_reason"] = self._explain(row, expenses)
 
         return df
 

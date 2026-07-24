@@ -159,6 +159,42 @@ class TestAnomalyDetector:
         hotel_row = result[result["description"] == "Luxury Hotel"]
         assert hotel_row["anomaly_score"].iloc[0] >= result["anomaly_score"].median()
 
+    def test_uniform_amounts_not_flagged(self):
+        """H3 regression: uniform identical expenses must yield zero anomalies.
+        Previously the min-max collapse set the threshold to 0 and flagged
+        every row — the income row included."""
+        rows = [
+            {
+                "date": pd.Timestamp("2026-04-01", tz="UTC"),
+                "description": f"Netflix {i}",
+                "amount": -9.99,
+                "transaction_id": f"t{i}",
+            }
+            for i in range(6)
+        ]
+        rows.append(
+            {
+                "date": pd.Timestamp("2026-04-02", tz="UTC"),
+                "description": "Payroll",
+                "amount": 3000.0,
+                "transaction_id": "inc",
+            }
+        )
+        df = pd.DataFrame(rows)
+        result = AnomalyDetector().fit_predict(df)
+        assert int(result["is_anomaly"].sum()) == 0
+        assert (result["anomaly_reason"] == "").all()
+
+    def test_top_n_respects_threshold(self):
+        """H3 regression: top-N labeling must not force-flag rows scoring
+        below the anomaly threshold — only the true outlier is flagged."""
+        df = self._df_with_outlier()
+        result = AnomalyDetector().fit_predict(df)
+        assert int(result["is_anomaly"].sum()) == 1
+        assert result.loc[result["description"] == "Luxury Hotel", "is_anomaly"].iloc[0]
+        flagged_reasons = result[result["is_anomaly"]]["anomaly_reason"]
+        assert (flagged_reasons != "").all()
+
     def test_features_include_category_and_timing(self):
         """Task 7: _build_features returns 5 columns when category column present."""
 
