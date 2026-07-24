@@ -308,8 +308,10 @@ class TestNarrator:
         mock_response = MagicMock()
         mock_response.content = [
             MagicMock(
-                text='{"insights": [{"headline": "You spent a lot", "detail": "On stuff."}], '
-                     '"next_steps": "Spend less.", "tldr": "Tight month."}'
+                text='{"insights": [{"headline": "Chipotle hit $187 over 11 visits", '
+                     '"detail": "That is 34% of the $547 food budget."}], '
+                     '"next_steps": "Cancel two of five streaming services to save $29/month.", '
+                     '"tldr": "Chipotle was 34% of a $547 food budget."}'
             )
         ]
 
@@ -319,6 +321,80 @@ class TestNarrator:
             report = narrator.generate_narrative(stats, [])
 
         assert isinstance(report, NarrativeReport)
-        assert report.tldr == "Tight month."
+        assert report.tldr == "Chipotle was 34% of a $547 food budget."
         assert len(report.insights) == 1
-        assert report.insights[0].headline == "You spent a lot"
+        assert report.insights[0].headline == "Chipotle hit $187 over 11 visits"
+
+    def test_quality_guard_drops_generic_keeps_specific(self, sample_df):
+        """M1: the guard suppresses low-signal insights but keeps the specific
+        ones, returning on the first attempt when at least one survives."""
+        from receipt.analysis.narrator import Narrator
+        from receipt.pipeline.aggregator import compute_stats
+
+        stats = compute_stats(sample_df)
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(
+                text='{"insights": ['
+                '{"headline": "You spent a lot on food", "detail": "It looks like a lot."}, '
+                '{"headline": "Chipotle was 34% of the $547 food budget", '
+                '"detail": "Eleven visits totalling $187."}'
+                '], "next_steps": "Cancel two services to save $29/month.", "tldr": "Food heavy."}'
+            )
+        ]
+        with patch("receipt.analysis.narrator.anthropic.Anthropic") as MockClient:
+            create = MockClient.return_value.messages.create
+            create.return_value = mock_response
+            report = Narrator(api_key="test-key").generate_narrative(stats, [])
+
+        assert create.call_count == 1
+        assert len(report.insights) == 1
+        assert "Chipotle" in report.insights[0].headline
+
+    def test_all_generic_returns_best_effort_not_empty(self, sample_df):
+        """M1: when every insight is generic across all retries, return the
+        best-effort narrative rather than an empty one (README promise)."""
+        from receipt.analysis.narrator import Narrator
+        from receipt.pipeline.aggregator import compute_stats
+
+        stats = compute_stats(sample_df)
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(
+                text='{"insights": [{"headline": "You spent money", '
+                '"detail": "Consider reducing spending."}], '
+                '"next_steps": "Spend less.", "tldr": "Generic."}'
+            )
+        ]
+        with patch("receipt.analysis.narrator.anthropic.Anthropic") as MockClient:
+            create = MockClient.return_value.messages.create
+            create.return_value = mock_response
+            report = Narrator(api_key="test-key").generate_narrative(stats, [])
+
+        # Retried MAX_RETRIES times, then fell back to the original insights.
+        assert create.call_count == Narrator.MAX_RETRIES
+        assert len(report.insights) == 1  # not empty
+
+    def test_empty_insights_triggers_retry(self, sample_df):
+        """M1: an empty insights list is a retryable low-quality response."""
+        from receipt.analysis.narrator import Narrator
+        from receipt.pipeline.aggregator import compute_stats
+
+        stats = compute_stats(sample_df)
+        empty = MagicMock()
+        empty.content = [MagicMock(text='{"insights": [], "next_steps": "", "tldr": ""}')]
+        good = MagicMock()
+        good.content = [
+            MagicMock(
+                text='{"insights": [{"headline": "Chipotle was 34% of $547", '
+                '"detail": "Eleven visits at $187."}], '
+                '"next_steps": "Cancel two services for $29/month.", "tldr": "Food heavy."}'
+            )
+        ]
+        with patch("receipt.analysis.narrator.anthropic.Anthropic") as MockClient:
+            create = MockClient.return_value.messages.create
+            create.side_effect = [empty, good]
+            report = Narrator(api_key="test-key").generate_narrative(stats, [])
+
+        assert create.call_count == 2
+        assert len(report.insights) == 1

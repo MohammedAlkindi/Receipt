@@ -355,24 +355,23 @@ class Narrator:
         self._temperature = temperature
 
     @staticmethod
-    def _validate_insight_quality(insights: list[Insight]) -> None:
-        """Warn if more than half the insights contain low-signal phrases."""
-        if not insights:
-            return
-        failures = 0
+    def _apply_quality_guard(
+        insights: list[Insight],
+    ) -> tuple[list[Insight], list[Insight]]:
+        """Split insights into (kept, suppressed) by low-signal phrase content.
+
+        An insight is suppressed when its text contains any generic filler
+        phrase from _LOW_SIGNAL_PHRASES.
+        """
+        kept: list[Insight] = []
+        suppressed: list[Insight] = []
         for insight in insights:
             text = (insight.headline + " " + insight.detail).lower()
             if any(phrase in text for phrase in _LOW_SIGNAL_PHRASES):
-                failures += 1
-                logger.debug("Low-quality insight flagged: %r", insight.headline)
-        if failures > len(insights) / 2:
-            logger.warning(
-                "Insight quality check: %d/%d insights contain low-signal phrases. "
-                "Model may be producing generic output; consider adjusting the prompt "
-                "or lowering temperature.",
-                failures,
-                len(insights),
-            )
+                suppressed.append(insight)
+            else:
+                kept.append(insight)
+        return kept, suppressed
 
     def generate_narrative(
         self,
@@ -402,16 +401,26 @@ class Narrator:
         base_content = _build_prompt(stats, patterns, drift, anomalies)
 
         last_exc: Exception | None = None
+        retry_reason: str | None = None  # "malformed" | "low_quality"
         malformed_text: str | None = None
+        fallback_report: NarrativeReport | None = None
 
         for attempt in range(self.MAX_RETRIES):
-            if malformed_text is not None:
+            if retry_reason == "malformed":
                 user_content = (
                     "IMPORTANT: Your previous response was not valid JSON. "
                     "Return ONLY the raw JSON object. No markdown fences, no backticks, "
                     "no explanation before or after the JSON.\n\n"
                     f"Your previous (invalid) response was:\n{malformed_text}\n\n"
                     f"Now generate the correct JSON for this data:\n\n{base_content}"
+                )
+            elif retry_reason == "low_quality":
+                user_content = (
+                    "IMPORTANT: Your previous insights were too generic or empty. "
+                    "Every insight must cite a specific dollar amount, merchant, or "
+                    "ratio from the data and must not use filler phrases like "
+                    "'you spent', 'consider reducing', or 'it looks like'. "
+                    f"Regenerate the JSON for this data:\n\n{base_content}"
                 )
             else:
                 user_content = base_content
@@ -432,27 +441,52 @@ class Narrator:
                     Insight(headline=i["headline"], detail=i["detail"])
                     for i in data.get("insights", [])
                 ]
-                report = NarrativeReport(
-                    tldr=data.get("tldr", ""),
-                    insights=insights,
-                    next_steps=data.get("next_steps", ""),
-                )
-                self._validate_insight_quality(insights)
-                al.metadata["api_attempts"] = attempt + 1
-                return report
+                tldr = data.get("tldr", "")
+                next_steps = data.get("next_steps", "")
+
+                kept, suppressed = self._apply_quality_guard(insights)
+                if suppressed:
+                    logger.info(
+                        "Quality guard suppressed %d/%d low-signal insight(s).",
+                        len(suppressed),
+                        len(insights),
+                    )
+
+                if kept:
+                    al.metadata["api_attempts"] = attempt + 1
+                    al.metadata["insights_suppressed"] = len(suppressed)
+                    return NarrativeReport(tldr=tldr, insights=kept, next_steps=next_steps)
+
+                # Nothing usable survived the guard (empty or all-generic).
+                # Remember the first parseable response as a last resort so we
+                # never return a completely empty narrative, then retry.
+                if insights and fallback_report is None:
+                    fallback_report = NarrativeReport(
+                        tldr=tldr, insights=insights, next_steps=next_steps
+                    )
+                retry_reason = "low_quality"
+                last_exc = RuntimeError("all insights failed the quality guard")
             except json.JSONDecodeError as exc:
                 logger.debug("Malformed JSON response (attempt %d): %s", attempt + 1, raw_text)
                 logger.warning("JSON parse error on attempt %d: %s", attempt + 1, exc)
+                retry_reason = "malformed"
                 malformed_text = raw_text
                 last_exc = exc
             except Exception as exc:
                 logger.warning("API error on attempt %d: %s", attempt + 1, exc)
                 last_exc = exc
-                malformed_text = None
+                retry_reason = None
                 if attempt < self.MAX_RETRIES - 1:
                     time.sleep(2 ** attempt)
 
         al.metadata["api_attempts"] = self.MAX_RETRIES
+        if fallback_report is not None:
+            logger.warning(
+                "Quality guard: all insights were low-signal after %d attempts; "
+                "returning the best-effort narrative rather than an empty one.",
+                self.MAX_RETRIES,
+            )
+            return fallback_report
         raise RuntimeError(
             f"Failed to generate narrative after {self.MAX_RETRIES} attempts: {last_exc}"
         )
