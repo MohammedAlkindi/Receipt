@@ -52,6 +52,16 @@ class TestLateNightSpending:
         result = _late_night_spending(df)
         assert result is None
 
+    def test_no_trigger_on_date_only_data(self):
+        """H2 regression: date-only CSVs produce hour 0 on every row; the
+        detector must not report 100% late-night spend on such data."""
+        rows = [
+            _tx(f"2026-04-{i:02d}", "Uber Eats", -20.0, "food_dining", hour=0)
+            for i in range(1, 10)
+        ]
+        df = pd.DataFrame(rows)
+        assert _late_night_spending(df) is None
+
 
 # ---------------------------------------------------------------------------
 # Pattern: SUBSCRIPTION_CREEP

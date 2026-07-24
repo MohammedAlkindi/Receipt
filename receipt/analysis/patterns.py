@@ -45,6 +45,11 @@ def _late_night_spending(df: pd.DataFrame) -> Pattern | None:
     """Flag if more than 15% of food spend happens between 10pm and 4am."""
     if "hour" not in df.columns:
         return None
+    # Date-only sources (every bank CSV) parse to hour 0 on all rows, which
+    # would count 100% of food spend as "after 10 PM". No real time data,
+    # no late-night claim.
+    if df["hour"].nunique(dropna=True) <= 1:
+        return None
     food_mask = df.get("category", pd.Series()) == "food_dining"
     food = df[food_mask & (df["amount"] < 0)]
     if food.empty:
