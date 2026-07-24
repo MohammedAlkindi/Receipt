@@ -170,6 +170,7 @@ def _build_prompt(
     stats: dict[str, Any],
     patterns: list[Pattern],
     drift: DriftReport | None,
+    anomalies: list[dict[str, Any]] | None = None,
 ) -> str:
     parts: list[str] = []
 
@@ -282,6 +283,16 @@ def _build_prompt(
         parts.append("")
 
     # -------------------------------------------------------------------------
+    if anomalies:
+        parts.append("## STATISTICAL OUTLIERS (Isolation Forest)")
+        for a in anomalies:
+            reason = f" — {a['reason']}" if a.get("reason") else ""
+            parts.append(
+                f"- ${abs(a['amount']):.2f} at {a['description']} on {a['date']}{reason}"
+            )
+        parts.append("")
+
+    # -------------------------------------------------------------------------
     if drift:
         parts.append("## BEHAVIORAL DRIFT vs PREVIOUS PERIOD")
         if drift.velocity_trend != "stable":
@@ -366,12 +377,13 @@ class Narrator:
         patterns: list[Pattern],
         drift: DriftReport | None = None,
         audit_log: Any | None = None,
+        anomalies: list[dict[str, Any]] | None = None,
     ) -> NarrativeReport:
         from receipt.pipeline.audit import AuditLogger
 
         tx_count = stats.get("transaction_count", 0)
         with AuditLogger(audit_log, "generate_narrative", tx_count) as al:
-            report = self._generate_narrative_impl(stats, patterns, drift, al)
+            report = self._generate_narrative_impl(stats, patterns, drift, al, anomalies)
             al.output_rows = 0
         return report
 
@@ -381,9 +393,10 @@ class Narrator:
         patterns: list[Pattern],
         drift: DriftReport | None,
         al: Any,
+        anomalies: list[dict[str, Any]] | None = None,
     ) -> NarrativeReport:
         client = anthropic.Anthropic(api_key=self._api_key)
-        base_content = _build_prompt(stats, patterns, drift)
+        base_content = _build_prompt(stats, patterns, drift, anomalies)
 
         last_exc: Exception | None = None
         malformed_text: str | None = None

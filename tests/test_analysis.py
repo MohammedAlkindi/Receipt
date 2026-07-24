@@ -236,6 +236,34 @@ class TestAnomalyDetector:
         assert (features[:, 3] == -1).all()
 
 
+class TestExtractAnomalies:
+    def test_returns_flagged_rows_sorted(self):
+        """M4: extract_anomalies surfaces flagged rows highest-score first."""
+        from receipt.analysis.anomalies import extract_anomalies
+
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-04-01", "2026-04-02"]).tz_localize("UTC"),
+                "description": ["Cheap", "Expensive"],
+                "amount": [-5.0, -900.0],
+                "is_anomaly": [False, True],
+                "anomaly_score": [0.1, 0.95],
+                "anomaly_reason": ["", "900 is 180x the median"],
+            }
+        )
+        result = extract_anomalies(df)
+        assert len(result) == 1
+        assert result[0]["description"] == "Expensive"
+        assert result[0]["amount"] == -900.0
+        assert result[0]["reason"]
+
+    def test_empty_when_no_columns(self):
+        from receipt.analysis.anomalies import extract_anomalies
+
+        df = pd.DataFrame({"amount": [-5.0]})
+        assert extract_anomalies(df) == []
+
+
 # ---------------------------------------------------------------------------
 # Narrator (mocked)
 # ---------------------------------------------------------------------------

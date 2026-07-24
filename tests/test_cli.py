@@ -198,6 +198,9 @@ class TestAnalyzeJSON:
         data = json.loads(result.output)
         assert "stats" in data
         assert "patterns" in data
+        # M4: anomalies are part of the JSON contract (empty here, key present).
+        assert "anomalies" in data
+        assert isinstance(data["anomalies"], list)
 
     def test_json_stats_keys(self, mocker, tmp_path):
         _patch_pipeline(mocker)
@@ -610,6 +613,7 @@ class TestAnalyzeEndpoint:
         body = resp.json()
         assert body["drift"] is None
         assert body["transaction_count"] == 2
+        assert "anomalies" in body and isinstance(body["anomalies"], list)
         # narrator received the drift positional arg (None here)
         args, _ = narrator.generate_narrative.call_args
         assert args[2] is None

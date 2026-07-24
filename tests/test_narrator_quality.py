@@ -187,3 +187,27 @@ class TestNarratorQuality:
             ]
             with pytest.raises(RuntimeError, match="Failed to generate narrative"):
                 narrator.generate_narrative(narrator_stats, [])
+
+    def test_prompt_includes_anomalies_and_key_stats(self, narrator, narrator_stats):
+        """M4 + coverage: the built prompt must actually carry the anomaly
+        outliers and the core figures to the model, not just trigger a call."""
+        anomalies = [
+            {
+                "date": "2026-04-20",
+                "description": "Luxury Hotel",
+                "amount": -1500.0,
+                "score": 0.99,
+                "reason": "$1500.00 at Luxury Hotel is 25x the median transaction",
+            }
+        ]
+        with patch("receipt.analysis.narrator.anthropic.Anthropic") as MockClient:
+            mock_create = MockClient.return_value.messages.create
+            mock_create.return_value = _make_response(_GOOD_JSON)
+            narrator.generate_narrative(narrator_stats, [], anomalies=anomalies)
+
+        _, kwargs = mock_create.call_args
+        sent = kwargs["messages"][0]["content"]
+        assert "STATISTICAL OUTLIERS" in sent
+        assert "Luxury Hotel" in sent
+        assert kwargs["timeout"] == narrator.API_TIMEOUT
+        assert kwargs["model"] == narrator.MODEL

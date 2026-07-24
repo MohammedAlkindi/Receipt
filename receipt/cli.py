@@ -140,10 +140,11 @@ def _run_pipeline(
 
         # --- Anomalies ---
         progress.update(task, description="Detecting anomalies…")
-        from receipt.analysis.anomalies import AnomalyDetector
+        from receipt.analysis.anomalies import AnomalyDetector, extract_anomalies
 
         detector = AnomalyDetector()
         df = detector.fit_predict(df, audit_log=audit_log)
+        anomalies = extract_anomalies(df)
 
         # --- Stats ---
         progress.update(task, description="Computing statistics…")
@@ -181,7 +182,9 @@ def _run_pipeline(
 
             narrator = Narrator(api_key=resolved_key)
             try:
-                narrative = narrator.generate_narrative(stats, patterns, drift, audit_log=audit_log)
+                narrative = narrator.generate_narrative(
+                    stats, patterns, drift, audit_log=audit_log, anomalies=anomalies
+                )
             except Exception as exc:
                 if _verbose:
                     console.print(f"[warning]Narrative generation failed: {exc}[/warning]")
@@ -218,6 +221,7 @@ def _run_pipeline(
                 {"type": p.type, "headline": p.headline, "severity": p.severity, "data": p.data}
                 for p in patterns
             ],
+            "anomalies": anomalies,
             "drift": drift.to_dict() if drift else None,
             "narrative": narrative.to_dict() if narrative else None,
         }
@@ -225,14 +229,14 @@ def _run_pipeline(
         return
 
     if output == "markdown":
-        _render_markdown(stats, patterns, drift, narrative, run_id)
+        _render_markdown(stats, patterns, drift, narrative, run_id, anomalies)
         return
 
     # Default: rich terminal
-    _render_terminal(stats, patterns, drift, narrative, run_id, len(df))
+    _render_terminal(stats, patterns, drift, narrative, run_id, len(df), anomalies)
 
 
-def _render_terminal(stats, patterns, drift, narrative, run_id, tx_count) -> None:
+def _render_terminal(stats, patterns, drift, narrative, run_id, tx_count, anomalies=None) -> None:
     console.rule("[header] receipt analysis [/header]")
 
     # Summary table
@@ -277,6 +281,23 @@ def _render_terminal(stats, patterns, drift, narrative, run_id, tx_count) -> Non
                 Panel(p.headline, title=f"[{color}]{p.type}[/{color}]", border_style=color)
             )
 
+    # Anomalies
+    if anomalies:
+        console.print()
+        anomaly_table = Table(title="Statistical Outliers", show_header=True, header_style="bold red")
+        anomaly_table.add_column("Date")
+        anomaly_table.add_column("Merchant")
+        anomaly_table.add_column("Amount", justify="right")
+        anomaly_table.add_column("Why")
+        for a in anomalies:
+            anomaly_table.add_row(
+                a["date"],
+                a["description"],
+                f"[expense]${abs(a['amount']):.2f}[/expense]",
+                a["reason"] or "statistical outlier for this period",
+            )
+        console.print(anomaly_table)
+
     # Drift
     if drift and drift.narrative_hints:
         console.print()
@@ -300,7 +321,7 @@ def _render_terminal(stats, patterns, drift, narrative, run_id, tx_count) -> Non
         console.print(f"\n[info]Saved as run [bold]{run_id}[/bold]. Run `receipt history` to view past analyses.[/info]")
 
 
-def _render_markdown(stats, patterns, drift, narrative, run_id) -> None:
+def _render_markdown(stats, patterns, drift, narrative, run_id, anomalies=None) -> None:
     lines = ["# Receipt Analysis Report", ""]
     lines.append("## Summary")
     lines.append(f"- **Total Spent:** ${abs(stats['total_spent']):.2f}")
@@ -316,6 +337,14 @@ def _render_markdown(stats, patterns, drift, narrative, run_id) -> None:
         lines.append("## Patterns")
         for p in patterns:
             lines.append(f"- **[{p.severity.upper()}] {p.type}:** {p.headline}")
+    if anomalies:
+        lines.append("")
+        lines.append("## Statistical Outliers")
+        for a in anomalies:
+            reason = f" — {a['reason']}" if a["reason"] else ""
+            lines.append(
+                f"- **${abs(a['amount']):.2f}** at {a['description']} on {a['date']}{reason}"
+            )
     if drift and drift.narrative_hints:
         lines.append("")
         lines.append("## Drift vs Previous Period")
@@ -408,7 +437,7 @@ def demo() -> None:
     )
     console.print("[info]Embeddings disabled for speed. No API key needed.[/info]\n")
 
-    from receipt.analysis.anomalies import AnomalyDetector
+    from receipt.analysis.anomalies import AnomalyDetector, extract_anomalies
     from receipt.analysis.patterns import detect_patterns
     from receipt.ingestion.chase import ChaseParser
     from receipt.pipeline.aggregator import compute_stats
@@ -423,8 +452,9 @@ def demo() -> None:
     df = AnomalyDetector().fit_predict(df)
     stats = compute_stats(df)
     patterns = detect_patterns(df)
+    anomalies = extract_anomalies(df)
 
-    _render_terminal(stats, patterns, None, None, None, len(df))
+    _render_terminal(stats, patterns, None, None, None, len(df), anomalies)
     console.print(
         "\n[info]To analyze your own transactions: "
         "receipt analyze <path/to/transactions.csv>[/info]"

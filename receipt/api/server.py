@@ -176,11 +176,20 @@ class PatternModel(BaseModel):
     data: dict[str, Any]
 
 
+class AnomalyModel(BaseModel):
+    date: str
+    description: str
+    amount: float
+    score: float
+    reason: str
+
+
 class AnalyzeResponse(BaseModel):
     run_id: Optional[str]
     transaction_count: int
     stats: dict[str, Any]
     patterns: list[PatternModel]
+    anomalies: list[AnomalyModel] = []
     drift: Optional[dict[str, Any]]
     narrative: Optional[NarrativeModel]
     audit_log: Optional[dict[str, Any]] = None
@@ -312,7 +321,7 @@ async def analyze(
         )
 
     # Pipeline — all blocking calls offloaded to a thread pool
-    from receipt.analysis.anomalies import AnomalyDetector
+    from receipt.analysis.anomalies import AnomalyDetector, extract_anomalies
     from receipt.analysis.narrator import Narrator
     from receipt.analysis.patterns import detect_patterns
     from receipt.pipeline.aggregator import compute_stats
@@ -336,6 +345,7 @@ async def analyze(
 
     stats = await anyio.to_thread.run_sync(lambda: compute_stats(df, audit_log=audit_log))
     patterns = await anyio.to_thread.run_sync(lambda: detect_patterns(df))
+    anomalies = extract_anomalies(df)
 
     # Drift vs previous stored period (mirrors the CLI --compare path)
     from receipt.pipeline.drift import DriftDetector
@@ -357,7 +367,7 @@ async def analyze(
     narrator = Narrator(api_key=x_api_key)
     try:
         narrative_report = narrator.generate_narrative(
-            stats, patterns, drift, audit_log=audit_log
+            stats, patterns, drift, audit_log=audit_log, anomalies=anomalies
         )
     except Exception as exc:
         raise HTTPException(
@@ -395,6 +405,7 @@ async def analyze(
         transaction_count=len(df),
         stats=stats,
         patterns=pattern_models,
+        anomalies=[AnomalyModel(**a) for a in anomalies],
         drift=drift.to_dict() if drift else None,
         narrative=narrative_model,
         audit_log=audit_log.to_dict(),

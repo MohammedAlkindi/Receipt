@@ -11,6 +11,30 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def extract_anomalies(df: pd.DataFrame, limit: int = 5) -> list[dict[str, Any]]:
+    """Return flagged anomalies as display-ready dicts, most anomalous first.
+
+    Empty when the detector produced no columns or flagged nothing, so callers
+    can surface it unconditionally.
+    """
+    if "is_anomaly" not in df.columns or "anomaly_score" not in df.columns:
+        return []
+    flagged = df[df["is_anomaly"]].copy()
+    if flagged.empty:
+        return []
+    flagged = flagged.sort_values("anomaly_score", ascending=False).head(limit)
+    return [
+        {
+            "date": str(row["date"])[:10],
+            "description": str(row.get("description", "")),
+            "amount": float(row["amount"]),
+            "score": round(float(row.get("anomaly_score", 0.0)), 3),
+            "reason": str(row.get("anomaly_reason", "") or ""),
+        }
+        for _, row in flagged.iterrows()
+    ]
+
+
 class AnomalyDetector:
     """Flag statistically unusual transactions using Isolation Forest.
 
