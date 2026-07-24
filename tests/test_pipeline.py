@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 import pandas as pd
 
 from receipt.pipeline.aggregator import compute_stats
@@ -351,14 +353,14 @@ class TestDriftDetectorThreshold:
 
 class TestPipelineAuditLog:
     def test_audit_log_captures_stage_events(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from receipt.pipeline.audit import PipelineAuditLog
         from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
 
         audit_log = PipelineAuditLog(
             run_id="test-run",
-            started_at=datetime.now(timezone.utc).isoformat(),
+            started_at=datetime.now(UTC).isoformat(),
         )
         df = pd.DataFrame(
             {
@@ -383,14 +385,14 @@ class TestPipelineAuditLog:
 
     def test_audit_log_to_dict_valid_json(self):
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from receipt.pipeline.audit import PipelineAuditLog
         from receipt.pipeline.cleaner import normalize_descriptions
 
         audit_log = PipelineAuditLog(
             run_id="r1",
-            started_at=datetime.now(timezone.utc).isoformat(),
+            started_at=datetime.now(UTC).isoformat(),
         )
         df = pd.DataFrame(
             {

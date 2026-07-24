@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from io import IOBase
 from pathlib import Path
-from typing import Union
 
 import pandas as pd
 
@@ -28,7 +27,7 @@ class PlaidParser(TransactionParser):
         cols = {c.strip().lower() for c in df.columns}
         return _PLAID_REQUIRED.issubset(cols)
 
-    def parse(self, source: Union[str, Path, IOBase]) -> pd.DataFrame:
+    def parse(self, source: str | Path | IOBase) -> pd.DataFrame:
         try:
             if isinstance(source, (str, Path)):
                 raw = pd.read_csv(source, encoding="utf-8-sig", nrows=MAX_ROWS + 1)

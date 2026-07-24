@@ -9,8 +9,8 @@ import logging
 import os
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import anyio
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
@@ -186,14 +186,14 @@ class AnomalyModel(BaseModel):
 
 
 class AnalyzeResponse(BaseModel):
-    run_id: Optional[str]
+    run_id: str | None
     transaction_count: int
     stats: dict[str, Any]
     patterns: list[PatternModel]
     anomalies: list[AnomalyModel] = []
-    drift: Optional[dict[str, Any]]
-    narrative: Optional[NarrativeModel]
-    audit_log: Optional[dict[str, Any]] = None
+    drift: dict[str, Any] | None
+    narrative: NarrativeModel | None
+    audit_log: dict[str, Any] | None = None
 
 
 class HealthResponse(BaseModel):
@@ -208,9 +208,9 @@ class AnalysisRunSummary(BaseModel):
     created_at: str
     period_start: str
     period_end: str
-    source_file: Optional[str]
+    source_file: str | None
     transaction_count: int
-    tldr: Optional[str]
+    tldr: str | None
 
 
 class AnalysisRunDetail(BaseModel):
@@ -218,18 +218,18 @@ class AnalysisRunDetail(BaseModel):
     created_at: str
     period_start: str
     period_end: str
-    source_file: Optional[str]
+    source_file: str | None
     transaction_count: int
-    narrative: Optional[NarrativeModel]
+    narrative: NarrativeModel | None
 
 
 class MerchantSummary(BaseModel):
     name: str
-    category: Optional[str]
+    category: str | None
     total_spent: float
     transaction_count: int
-    first_seen: Optional[str]
-    last_seen: Optional[str]
+    first_seen: str | None
+    last_seen: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +315,7 @@ async def analyze(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
     # Filter period
-    cutoff = datetime.now(timezone.utc) - timedelta(days=request.period)
+    cutoff = datetime.now(UTC) - timedelta(days=request.period)
     df = df[df["date"] >= cutoff].copy()
     if df.empty:
         raise HTTPException(
@@ -334,7 +334,7 @@ async def analyze(
 
     audit_log = PipelineAuditLog(
         run_id=None,
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=datetime.now(UTC).isoformat(),
     )
 
     _df = [df]

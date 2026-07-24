@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -57,8 +57,8 @@ class AuditLogger:
     def metadata(self) -> dict[str, Any]:
         return self._metadata
 
-    def __enter__(self) -> "AuditLogger":
-        self._started_at = datetime.now(timezone.utc).isoformat()
+    def __enter__(self) -> AuditLogger:
+        self._started_at = datetime.now(UTC).isoformat()
         self._t0 = time.monotonic()
         return self
 

@@ -40,7 +40,7 @@ class Transaction(Base):
     day_of_week: Mapped[str | None] = mapped_column(String(16), nullable=True)
     run_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("analysis_runs.run_id"), nullable=True, index=True)
 
-    run: Mapped["AnalysisRun | None"] = relationship("AnalysisRun", back_populates="transactions")
+    run: Mapped[AnalysisRun | None] = relationship("AnalysisRun", back_populates="transactions")
 
     def __repr__(self) -> str:
         return f"<Transaction {self.transaction_id} {self.description} {self.amount}>"

@@ -6,9 +6,9 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -78,7 +78,7 @@ def _run_pipeline(
     from receipt.pipeline.audit import PipelineAuditLog
     audit_log = PipelineAuditLog(
         run_id=None,
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=datetime.now(UTC).isoformat(),
     )
 
     with Progress(
@@ -112,7 +112,7 @@ def _run_pipeline(
         df = parser.parse(file_path)
 
         # Filter to period
-        cutoff = datetime.now(timezone.utc) - timedelta(days=period)
+        cutoff = datetime.now(UTC) - timedelta(days=period)
         df = df[df["date"] >= cutoff].copy()
 
         if df.empty:
@@ -383,7 +383,7 @@ def analyze(
         str, typer.Option("--output", "-o", help="Output format: terminal|json|markdown")
     ] = "terminal",
     save: Annotated[bool, typer.Option("--save", help="Save results to local DB")] = False,
-    api_key: Annotated[Optional[str], typer.Option("--api-key", help="Anthropic API key")] = None,
+    api_key: Annotated[str | None, typer.Option("--api-key", help="Anthropic API key")] = None,
     dedup_window: Annotated[
         int, typer.Option("--dedup-window", help="Near-duplicate window in days (0–7; 0 disables)")
     ] = 2,
@@ -561,8 +561,8 @@ def export(
 
 @app.command()
 def serve(
-    port: Annotated[Optional[int], typer.Option("--port", help="Port to listen on")] = None,
-    host: Annotated[Optional[str], typer.Option("--host", help="Host to bind")] = None,
+    port: Annotated[int | None, typer.Option("--port", help="Port to listen on")] = None,
+    host: Annotated[str | None, typer.Option("--host", help="Host to bind")] = None,
 ) -> None:
     """Start the FastAPI REST server.
 

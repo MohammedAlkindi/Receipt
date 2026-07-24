@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -146,7 +146,7 @@ class ReceiptStore:
         with Session(self._engine) as session:
             run = AnalysisRun(
                 run_id=run_id,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
                 period_start=period_start,
                 period_end=period_end,
                 source_file=source_file,
@@ -341,11 +341,11 @@ def _deserialize_narrative(data: dict[str, Any]) -> dict[str, Any]:
 def _to_utc_datetime(val: Any) -> datetime:
     if isinstance(val, datetime):
         if val.tzinfo is None:
-            return val.replace(tzinfo=timezone.utc)
+            return val.replace(tzinfo=UTC)
         return val
     if hasattr(val, "to_pydatetime"):
         dt = val.to_pydatetime()
         if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
+            return dt.replace(tzinfo=UTC)
         return dt
-    return datetime.fromisoformat(str(val)).replace(tzinfo=timezone.utc)
+    return datetime.fromisoformat(str(val)).replace(tzinfo=UTC)

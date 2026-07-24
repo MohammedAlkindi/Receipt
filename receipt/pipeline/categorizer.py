@@ -144,7 +144,7 @@ class SemanticCategorizer:
     def categorize(
         self,
         df: pd.DataFrame,
-        audit_log: "PipelineAuditLog | None" = None,
+        audit_log: PipelineAuditLog | None = None,
     ) -> pd.DataFrame:
         """Return df with added columns: category, category_confidence, cluster_id."""
         from receipt.pipeline.audit import AuditLogger

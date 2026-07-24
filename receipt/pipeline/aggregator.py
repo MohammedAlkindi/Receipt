@@ -15,7 +15,7 @@ import pandas as pd
 
 def compute_stats(
     df: pd.DataFrame,
-    audit_log: "Any | None" = None,
+    audit_log: Any | None = None,
 ) -> dict[str, Any]:
     """Compute a comprehensive stats dict from a categorized transaction DataFrame."""
     from receipt.pipeline.audit import AuditLogger

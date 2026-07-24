@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -32,14 +32,14 @@ class TestReceiptStore:
     def test_get_transactions_date_filter(self, store, sample_df):
         store.save_transactions(sample_df, "run1")
         # Filter to a date after all transactions
-        far_future = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        far_future = datetime(2030, 1, 1, tzinfo=UTC)
         result = store.get_transactions(start_date=far_future)
         assert result.empty
 
     def test_save_analysis_returns_run_id(self, store):
         run_id = store.save_analysis(
-            period_start=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            period_end=datetime(2026, 4, 30, tzinfo=timezone.utc),
+            period_start=datetime(2026, 4, 1, tzinfo=UTC),
+            period_end=datetime(2026, 4, 30, tzinfo=UTC),
             transaction_count=30,
         )
         assert isinstance(run_id, str)
@@ -47,13 +47,13 @@ class TestReceiptStore:
 
     def test_get_analysis_history_ordering(self, store):
         store.save_analysis(
-            period_start=datetime(2026, 3, 1, tzinfo=timezone.utc),
-            period_end=datetime(2026, 3, 31, tzinfo=timezone.utc),
+            period_start=datetime(2026, 3, 1, tzinfo=UTC),
+            period_end=datetime(2026, 3, 31, tzinfo=UTC),
             transaction_count=25,
         )
         store.save_analysis(
-            period_start=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            period_end=datetime(2026, 4, 30, tzinfo=timezone.utc),
+            period_start=datetime(2026, 4, 1, tzinfo=UTC),
+            period_end=datetime(2026, 4, 30, tzinfo=UTC),
             transaction_count=30,
         )
         history = store.get_analysis_history()
@@ -64,12 +64,12 @@ class TestReceiptStore:
     def test_get_previous_period(self, store, sample_df):
         store.save_transactions(sample_df, "run1")
         store.save_analysis(
-            period_start=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            period_end=datetime(2026, 4, 30, tzinfo=timezone.utc),
+            period_start=datetime(2026, 4, 1, tzinfo=UTC),
+            period_end=datetime(2026, 4, 30, tzinfo=UTC),
             transaction_count=len(sample_df),
         )
         # Current period starts in May
-        current_start = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        current_start = datetime(2026, 5, 1, tzinfo=UTC)
         prev = store.get_previous_period(current_start)
         assert prev is not None
 
@@ -78,24 +78,24 @@ class TestReceiptStore:
         MultipleResultsFound, and the most recent prior period wins."""
         store.save_transactions(sample_df, "run1")  # transactions dated April 2026
         store.save_analysis(
-            period_start=datetime(2026, 3, 1, tzinfo=timezone.utc),
-            period_end=datetime(2026, 3, 31, tzinfo=timezone.utc),
+            period_start=datetime(2026, 3, 1, tzinfo=UTC),
+            period_end=datetime(2026, 3, 31, tzinfo=UTC),
             transaction_count=0,
         )
         store.save_analysis(
-            period_start=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            period_end=datetime(2026, 4, 30, tzinfo=timezone.utc),
+            period_start=datetime(2026, 4, 1, tzinfo=UTC),
+            period_end=datetime(2026, 4, 30, tzinfo=UTC),
             transaction_count=len(sample_df),
         )
-        prev = store.get_previous_period(datetime(2026, 5, 1, tzinfo=timezone.utc))
+        prev = store.get_previous_period(datetime(2026, 5, 1, tzinfo=UTC))
         assert prev is not None
         # The April run (latest prior) was selected — its transactions exist.
         assert len(prev) == len(sample_df)
 
     def test_get_analysis_run_by_id(self, store):
         run_id = store.save_analysis(
-            period_start=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            period_end=datetime(2026, 4, 30, tzinfo=timezone.utc),
+            period_start=datetime(2026, 4, 1, tzinfo=UTC),
+            period_end=datetime(2026, 4, 30, tzinfo=UTC),
             transaction_count=10,
             narrative={"tldr": "Good month", "insights": [], "next_steps": "Keep it up."},
         )
@@ -198,7 +198,7 @@ class TestNarrativeDeserialization:
 
     def test_get_analysis_run_handles_legacy_narrative(self, tmp_path):
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from receipt.storage.store import ReceiptStore
 
@@ -211,9 +211,9 @@ class TestNarrativeDeserialization:
         with Session(store._engine) as session:
             run = AnalysisRun(
                 run_id="legacyrun01",
-                created_at=datetime.now(timezone.utc),
-                period_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                period_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+                created_at=datetime.now(UTC),
+                period_start=datetime(2026, 1, 1, tzinfo=UTC),
+                period_end=datetime(2026, 1, 31, tzinfo=UTC),
                 transaction_count=5,
                 narrative_json=legacy_narrative,
             )

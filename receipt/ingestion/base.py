@@ -6,7 +6,6 @@ import hashlib
 from abc import ABC, abstractmethod
 from io import IOBase
 from pathlib import Path
-from typing import Union
 
 import pandas as pd
 
@@ -42,7 +41,7 @@ class TransactionParser(ABC):
     }
 
     @abstractmethod
-    def parse(self, source: Union[str, Path, IOBase]) -> pd.DataFrame:
+    def parse(self, source: str | Path | IOBase) -> pd.DataFrame:
         """Parse *source* and return a standardised DataFrame."""
 
     def get_schema(self) -> dict:

@@ -49,7 +49,7 @@ class AnomalyDetector:
     def fit_predict(
         self,
         df: pd.DataFrame,
-        audit_log: "Any | None" = None,
+        audit_log: Any | None = None,
     ) -> pd.DataFrame:
         """Return df with added columns: anomaly_score, is_anomaly, anomaly_reason."""
         from receipt.pipeline.audit import AuditLogger
@@ -153,7 +153,7 @@ class AnomalyDetector:
             return np.abs((amounts - mean) / (std + 1e-9))
 
     @staticmethod
-    def _explain(row: "pd.Series[Any]", all_expenses: pd.DataFrame) -> str:
+    def _explain(row: pd.Series[Any], all_expenses: pd.DataFrame) -> str:
         amount = abs(float(row["amount"]))
         merchant = str(row.get("description", "Unknown"))
         median_amount = float(all_expenses["amount"].abs().median())

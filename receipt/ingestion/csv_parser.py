@@ -6,7 +6,7 @@ import logging
 import re
 from io import IOBase
 from pathlib import Path
-from typing import Literal, Union
+from typing import Literal
 
 import pandas as pd
 
@@ -64,7 +64,7 @@ class GenericCSVParser(TransactionParser):
     - Quoted fields and arbitrary delimiters
     """
 
-    def parse(self, source: Union[str, Path, IOBase]) -> pd.DataFrame:
+    def parse(self, source: str | Path | IOBase) -> pd.DataFrame:
         df = self._read_raw(source)
 
         if len(df) == 0:
@@ -143,7 +143,7 @@ class GenericCSVParser(TransactionParser):
 
         return warnings
 
-    def _read_raw(self, source: Union[str, Path, IOBase]) -> pd.DataFrame:
+    def _read_raw(self, source: str | Path | IOBase) -> pd.DataFrame:
         encodings = ["utf-8-sig", "utf-8", "latin-1", "cp1252"]
         for enc in encodings:
             try:
