@@ -150,9 +150,11 @@ def _require_receipt_token(x_receipt_token: str | None = Header(None)) -> None:
 class AnalyzeRequest(BaseModel):
     file_content: str  # base64-encoded CSV
     format: str = "auto"  # auto|chase|bofa|plaid|generic
-    period: int = 30  # days
-    dedup_window_days: int = 2  # near-duplicate window (0–7)
-    drift_threshold: float = 0.20  # category drift flag threshold (0.0–1.0)
+    period: int = Field(30, ge=1, le=36500, description="Days to analyze")
+    dedup_window_days: int = Field(2, ge=0, le=7, description="Near-duplicate window in days")
+    drift_threshold: float = Field(
+        0.20, ge=0.0, le=1.0, description="Category drift flag threshold"
+    )
 
 
 class InsightModel(BaseModel):
@@ -335,10 +337,28 @@ async def analyze(
     stats = await anyio.to_thread.run_sync(lambda: compute_stats(df, audit_log=audit_log))
     patterns = await anyio.to_thread.run_sync(lambda: detect_patterns(df))
 
+    # Drift vs previous stored period (mirrors the CLI --compare path)
+    from receipt.pipeline.drift import DriftDetector
+    from receipt.storage.store import ReceiptStore
+
+    store = ReceiptStore()
+    drift = None
+    prev_df = await anyio.to_thread.run_sync(
+        lambda: store.get_previous_period(df["date"].min())
+    )
+    if prev_df is not None and not prev_df.empty:
+        drift = await anyio.to_thread.run_sync(
+            lambda: DriftDetector(
+                drift_threshold=request.drift_threshold
+            ).compare_periods(df, prev_df)
+        )
+
     # Narrative
     narrator = Narrator(api_key=x_api_key)
     try:
-        narrative_report = narrator.generate_narrative(stats, patterns, audit_log=audit_log)
+        narrative_report = narrator.generate_narrative(
+            stats, patterns, drift, audit_log=audit_log
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -346,9 +366,6 @@ async def analyze(
         )
 
     # Save
-    from receipt.storage.store import ReceiptStore
-
-    store = ReceiptStore()
     run_id = store.save_analysis(
         period_start=df["date"].min().to_pydatetime(),
         period_end=df["date"].max().to_pydatetime(),
@@ -378,7 +395,7 @@ async def analyze(
         transaction_count=len(df),
         stats=stats,
         patterns=pattern_models,
-        drift=None,
+        drift=drift.to_dict() if drift else None,
         narrative=narrative_model,
         audit_log=audit_log.to_dict(),
     )

@@ -374,6 +374,10 @@ def analyze(
         console.print(f"[expense]Unknown format: {fmt}. Use auto|chase|bofa|plaid|generic[/expense]")
         raise typer.Exit(1)
 
+    if not 1 <= period <= 36500:
+        console.print("[expense]--period must be between 1 and 36500 days.[/expense]")
+        raise typer.Exit(1)
+
     if not 0 <= dedup_window <= 7:
         console.print("[expense]--dedup-window must be between 0 and 7.[/expense]")
         raise typer.Exit(1)

@@ -154,6 +154,16 @@ class TestAnalyzeTerminal:
         result = runner.invoke(app, ["analyze", str(csv), "--format", "unknown"])
         assert result.exit_code == 1
 
+    def test_out_of_range_period_exits_1(self, tmp_path):
+        """M3 regression: the CLI rejects a period outside 1..36500 instead of
+        letting timedelta overflow."""
+        csv = tmp_path / "test.csv"
+        csv.write_text("date,description,amount\n2026-04-01,Test,-5.00\n")
+
+        result = runner.invoke(app, ["analyze", str(csv), "--period", "1000000000"])
+        assert result.exit_code == 1
+        assert "period" in result.output.lower()
+
     def test_missing_file_exits_1(self):
         result = runner.invoke(app, ["analyze", "/nonexistent/path/data.csv"])
         assert result.exit_code == 1
@@ -519,6 +529,139 @@ class TestAPISecurity:
             headers={"X-Api-Key": "sk-ant-test", "Content-Type": "application/json"},
         )
         assert resp.status_code == 413
+
+
+class TestAnalyzeEndpoint:
+    """Integration tests for POST /analyze (keyword categorizer, mocked API)."""
+
+    def _b64(self, text: str) -> str:
+        import base64
+
+        return base64.b64encode(text.encode()).decode()
+
+    def _mock_pipeline(self, mocker, tmp_path, monkeypatch):
+        """Force keyword categorization (no model download) and mock the
+        Anthropic call; route the store at a temp DB."""
+        from receipt.analysis.narrator import NarrativeReport
+        from receipt.pipeline.categorizer import SemanticCategorizer as RealCat
+
+        monkeypatch.setenv("RECEIPT_DB_PATH", str(tmp_path / "api.db"))
+        monkeypatch.delenv("RECEIPT_API_TOKEN", raising=False)
+
+        mocker.patch(
+            "receipt.pipeline.categorizer.SemanticCategorizer",
+            side_effect=lambda *a, **k: RealCat(use_embeddings=False),
+        )
+        mock_narrator = mocker.MagicMock()
+        mock_narrator.generate_narrative.return_value = NarrativeReport(
+            tldr="t", insights=[], next_steps="n"
+        )
+        mocker.patch("receipt.analysis.narrator.Narrator", return_value=mock_narrator)
+        return mock_narrator
+
+    def test_period_out_of_range_returns_422(self, monkeypatch):
+        """M3 regression: period=1e9 is a typed 422, not a raw 500."""
+        from fastapi.testclient import TestClient
+
+        from receipt.api.server import app as fastapi_app
+
+        monkeypatch.delenv("RECEIPT_API_TOKEN", raising=False)
+        client = TestClient(fastapi_app)
+        resp = client.post(
+            "/analyze",
+            json={"file_content": self._b64("date,description,amount\n2026-07-20,X,-5\n"),
+                  "format": "generic", "period": 10**9},
+            headers={"X-Api-Key": "sk-ant-test"},
+        )
+        assert resp.status_code == 422
+
+    def test_dedup_window_out_of_range_returns_422(self, monkeypatch):
+        """M3 regression: dedup_window_days=9 is a typed 422, not a raw 500."""
+        from fastapi.testclient import TestClient
+
+        from receipt.api.server import app as fastapi_app
+
+        monkeypatch.delenv("RECEIPT_API_TOKEN", raising=False)
+        client = TestClient(fastapi_app)
+        resp = client.post(
+            "/analyze",
+            json={"file_content": self._b64("date,description,amount\n2026-07-20,X,-5\n"),
+                  "format": "generic", "dedup_window_days": 9},
+            headers={"X-Api-Key": "sk-ant-test"},
+        )
+        assert resp.status_code == 422
+
+    def test_analyze_happy_path(self, mocker, tmp_path, monkeypatch):
+        """/analyze returns a typed response and passes drift=None to the
+        narrator when there is no prior period."""
+        from fastapi.testclient import TestClient
+
+        from receipt.api.server import app as fastapi_app
+
+        narrator = self._mock_pipeline(mocker, tmp_path, monkeypatch)
+        client = TestClient(fastapi_app)
+        csv = "date,description,amount\n2026-07-20,Starbucks,-5.00\n2026-07-21,Netflix,-15.49\n"
+        resp = client.post(
+            "/analyze",
+            json={"file_content": self._b64(csv), "format": "generic", "period": 60},
+            headers={"X-Api-Key": "sk-ant-test"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["drift"] is None
+        assert body["transaction_count"] == 2
+        # narrator received the drift positional arg (None here)
+        args, _ = narrator.generate_narrative.call_args
+        assert args[2] is None
+
+    def test_analyze_computes_drift_against_prior_period(self, mocker, tmp_path, monkeypatch):
+        """M3 regression: the API computes drift vs the previous stored period
+        (previously it always returned drift=None)."""
+        from fastapi.testclient import TestClient
+
+        from receipt.api.server import app as fastapi_app
+        from receipt.storage.store import ReceiptStore
+
+        narrator = self._mock_pipeline(mocker, tmp_path, monkeypatch)
+
+        # Seed a prior (June) run with categorized transactions.
+        store = ReceiptStore()
+        prior = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-06-10", "2026-06-12"]).tz_localize("UTC"),
+                "description": ["Uber Eats", "Netflix"],
+                "raw_description": ["Uber Eats", "Netflix"],
+                "amount": [-20.0, -15.49],
+                "source": ["generic", "generic"],
+                "transaction_id": ["prior1", "prior2"],
+                "category": ["food_dining", "subscriptions"],
+            }
+        )
+        run_id = store.save_analysis(
+            period_start=prior["date"].min().to_pydatetime(),
+            period_end=prior["date"].max().to_pydatetime(),
+            transaction_count=len(prior),
+        )
+        store.save_transactions(prior, run_id)
+
+        client = TestClient(fastapi_app)
+        csv = (
+            "date,description,amount\n"
+            "2026-07-18,Uber Eats,-60.00\n"
+            "2026-07-20,Netflix,-15.49\n"
+        )
+        resp = client.post(
+            "/analyze",
+            json={"file_content": self._b64(csv), "format": "generic", "period": 40},
+            headers={"X-Api-Key": "sk-ant-test"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["drift"] is not None
+        assert "velocity_trend" in body["drift"]
+        # narrator received a non-None drift arg
+        args, _ = narrator.generate_narrative.call_args
+        assert args[2] is not None
 
 
 # ---------------------------------------------------------------------------
