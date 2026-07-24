@@ -124,7 +124,7 @@ def _weekend_splurge(df: pd.DataFrame) -> Pattern | None:
 
 def _single_merchant_dominance(df: pd.DataFrame) -> list[Pattern]:
     """Flag any merchant accounting for >25% of its category's spend."""
-    patterns = []
+    patterns: list[Pattern] = []
     if "category" not in df.columns:
         return patterns
     expenses = df[df["amount"] < 0]
@@ -213,7 +213,7 @@ def _income_irregularity(df: pd.DataFrame) -> Pattern | None:
 
 def _recurring_forgotten(df: pd.DataFrame) -> list[Pattern]:
     """Detect same amount + same merchant repeating monthly, outside subscriptions."""
-    patterns = []
+    patterns: list[Pattern] = []
     if "category" not in df.columns:
         return patterns
     expenses = df[(df["amount"] < 0) & (df["category"] != "subscriptions")].copy()

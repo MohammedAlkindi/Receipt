@@ -435,7 +435,7 @@ class Narrator:
                     timeout=self.API_TIMEOUT,
                     temperature=self._temperature,
                 )
-                raw_text = response.content[0].text
+                raw_text = getattr(response.content[0], "text", "") if response.content else ""
                 data = json.loads(raw_text)
                 insights = [
                     Insight(headline=i["headline"], detail=i["detail"])

@@ -7,9 +7,10 @@ import io
 import json
 import logging
 import os
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import anyio
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
@@ -98,7 +99,7 @@ async def _disconnect_message() -> Any:
 
 
 @asynccontextmanager
-async def lifespan(app_instance: FastAPI):  # type: ignore[type-arg]
+async def lifespan(app_instance: FastAPI):
     configure_logging()
     yield
 
@@ -280,18 +281,20 @@ async def analyze(
     csv_io = io.StringIO(csv_bytes.decode("utf-8-sig", errors="replace"))
 
     # Ingest
+    from receipt.ingestion.base import TransactionParser
     from receipt.ingestion.bofa import BofAParser
     from receipt.ingestion.chase import ChaseParser
     from receipt.ingestion.csv_parser import GenericCSVParser
     from receipt.ingestion.plaid import PlaidParser
 
-    parser_map = {
+    parser_map: dict[str, Callable[[], TransactionParser]] = {
         "chase": ChaseParser,
         "bofa": BofAParser,
         "plaid": PlaidParser,
         "generic": GenericCSVParser,
     }
 
+    parser: TransactionParser
     try:
         if request.format == "auto":
             import pandas as pd

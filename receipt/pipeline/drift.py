@@ -103,7 +103,7 @@ class DriftDetector:
             elif change < -self.drift_threshold:
                 report.decreased[cat] = detail
                 report.narrative_hints.append(
-                    f"{cat} spending fell {abs(detail['change_pct'])}% "
+                    f"{cat} spending fell {abs(round(change * 100, 1))}% "
                     f"(${detail['previous']} → ${detail['current']})"
                 )
 

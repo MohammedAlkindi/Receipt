@@ -88,6 +88,7 @@ class SemanticCategorizer:
             self._use_embeddings = False
 
     def _embed(self, texts: list[str]) -> np.ndarray:
+        assert self._model is not None  # only called after a successful _load_model
         return self._model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
 
     def _build_seed_embeddings(self) -> None:

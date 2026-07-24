@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Optional
@@ -89,17 +90,19 @@ def _run_pipeline(
         # --- Ingest ---
         task = progress.add_task("Detecting parser…", total=None)
         from receipt.ingestion import detect_parser
+        from receipt.ingestion.base import TransactionParser
         from receipt.ingestion.bofa import BofAParser
         from receipt.ingestion.chase import ChaseParser
         from receipt.ingestion.csv_parser import GenericCSVParser
         from receipt.ingestion.plaid import PlaidParser
 
-        parser_map = {
+        parser_map: dict[str, Callable[[], TransactionParser]] = {
             "chase": ChaseParser,
             "bofa": BofAParser,
             "plaid": PlaidParser,
             "generic": GenericCSVParser,
         }
+        parser: TransactionParser
         if fmt == "auto":
             parser = detect_parser(file_path)
         else:
