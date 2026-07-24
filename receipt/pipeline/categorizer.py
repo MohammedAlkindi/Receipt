@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -61,7 +62,11 @@ class SemanticCategorizer:
     """
 
     def __init__(self, cache_dir: Path | None = None, use_embeddings: bool = True):
-        self._cache_dir = cache_dir or Path.home() / ".receipt" / "models"
+        if cache_dir is None:
+            cache_dir = Path(
+                os.environ.get("RECEIPT_MODEL_CACHE", "~/.receipt/models")
+            ).expanduser()
+        self._cache_dir = cache_dir
         self._use_embeddings = use_embeddings
         self._model = None
         self._seed_embeddings: dict[str, np.ndarray] = {}

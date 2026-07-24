@@ -131,6 +131,16 @@ class TestReceiptStore:
         assert "analysis_runs" in stats
         assert "merchants" in stats
 
+    def test_receipt_db_path_env_override(self, tmp_path, monkeypatch):
+        """H4 regression: the app must honor RECEIPT_DB_PATH like Alembic does,
+        so migrations and the application target the same database."""
+        from receipt.storage.store import ReceiptStore
+
+        target = tmp_path / "custom" / "mydata.db"
+        monkeypatch.setenv("RECEIPT_DB_PATH", str(target))
+        ReceiptStore()
+        assert target.exists()
+
     def test_merchant_first_seen_unchanged_on_double_upsert(self, store, sample_df):
         sample_with_cat = sample_df.copy()
         sample_with_cat["category"] = "food_dining"

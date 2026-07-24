@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,14 @@ class ReceiptStore:
 
     def __init__(self, db_path: Path | None = None):
         if db_path is None:
-            db_path = Path.home() / ".receipt" / "receipt.db"
+            env_path = os.environ.get("RECEIPT_DB_PATH")
+            if env_path:
+                # Same resolution as alembic/env.py so app and migrations
+                # always target the same database.
+                db_path = Path(env_path).expanduser()
+            else:
+                db_path = Path.home() / ".receipt" / "receipt.db"
+        db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._engine = create_engine(f"sqlite:///{db_path}", echo=False)
         # Schema is managed by Alembic — run `alembic upgrade head` after install

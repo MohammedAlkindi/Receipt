@@ -145,6 +145,14 @@ class TestSemanticCategorizer:
         assert "category_confidence" in result.columns
         assert (result["category_confidence"] >= 0).all()
 
+    def test_model_cache_env_override(self, tmp_path, monkeypatch):
+        """H4 regression: RECEIPT_MODEL_CACHE must control the cache dir."""
+        from receipt.pipeline.categorizer import SemanticCategorizer
+
+        monkeypatch.setenv("RECEIPT_MODEL_CACHE", str(tmp_path / "modelcache"))
+        cat = SemanticCategorizer(use_embeddings=False)
+        assert cat._cache_dir == tmp_path / "modelcache"
+
 
 # ---------------------------------------------------------------------------
 # Aggregator
