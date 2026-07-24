@@ -27,18 +27,12 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Lint with ruff
-        run: ruff check receipt/ tests/ --select=E,F,W,I --ignore=E501
+        run: ruff check receipt/ tests/
 
-      - name: Run tests (excluding slow embedding tests)
-        run: |
-          pytest tests/test_ingestion.py \
-                 tests/test_narrator_quality.py \
-                 tests/test_pipeline.py \
-                 tests/test_storage.py \
-                 tests/test_smoke.py \
-                 tests/test_cli.py \
-                 tests/test_integration.py \
-                 -v --tb=short \
-                 -k "not embedding"
+      - name: Type-check with mypy
+        run: mypy receipt
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
         env:
           RECEIPT_LOG_LEVEL: WARNING
