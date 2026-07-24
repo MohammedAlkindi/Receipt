@@ -10,6 +10,11 @@ from typing import Union
 
 import pandas as pd
 
+# Hard cap on rows per file, enforced by every parser to prevent memory
+# exhaustion. Parsers read at most MAX_ROWS + 1 rows so an oversized file is
+# rejected without being fully materialized.
+MAX_ROWS = 50_000
+
 
 class ParseError(Exception):
     """Raised when a file cannot be parsed with an actionable message."""
@@ -76,6 +81,11 @@ class TransactionParser(ABC):
 
     def _finalise(self, df: pd.DataFrame, source_name: str) -> pd.DataFrame:
         """Apply common post-processing: source, IDs, schema enforcement."""
+        if len(df) > MAX_ROWS:
+            raise ParseError(
+                f"File has more than {MAX_ROWS} rows. Maximum supported is "
+                f"{MAX_ROWS}. Split your file into smaller chunks."
+            )
         df = df.copy()
         df["source"] = source_name
         df["raw_description"] = df.get("raw_description", df["description"])

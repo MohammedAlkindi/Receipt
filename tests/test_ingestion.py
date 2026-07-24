@@ -98,6 +98,15 @@ class TestGenericCSVParser:
         with pytest.raises(ParseError, match="no data rows"):
             GenericCSVParser().parse(io.StringIO(csv))
 
+    def test_rejects_file_over_row_cap(self):
+        """H6 regression: the generic parser rejects a file exceeding MAX_ROWS."""
+        from receipt.ingestion.base import MAX_ROWS
+
+        header = "date,description,amount\n"
+        rows = "".join(f"2026-01-01,Row{i},-1.00\n" for i in range(MAX_ROWS + 5))
+        with pytest.raises(ParseError, match="Maximum supported"):
+            GenericCSVParser().parse(io.StringIO(header + rows))
+
     def test_exact_match_before_partial_match(self):
         """Task 4: 'Transaction Date' exact match preferred over 'date_of_posting' partial."""
         # 'Transaction Date' is in _DATE_VARIANTS (exact); 'date_of_posting' would only
@@ -135,6 +144,16 @@ class TestChaseParser:
     def test_raises_on_bad_input(self):
         with pytest.raises(ParseError):
             ChaseParser().parse(io.StringIO("not,valid,csv\nfor,chase,bank\n"))
+
+    def test_rejects_file_over_row_cap(self):
+        """H6 regression: bank parsers share the MAX_ROWS guard via _finalise,
+        so a bank format can't bypass the cap the generic parser enforces."""
+        from receipt.ingestion.base import MAX_ROWS
+
+        header = "Transaction Date,Description,Amount\n"
+        rows = "".join(f"01/01/2026,Row{i},-1.00\n" for i in range(MAX_ROWS + 5))
+        with pytest.raises(ParseError, match="Maximum supported"):
+            ChaseParser().parse(io.StringIO(header + rows))
 
 
 # ---------------------------------------------------------------------------

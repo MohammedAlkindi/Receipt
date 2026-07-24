@@ -8,7 +8,7 @@ from typing import Union
 
 import pandas as pd
 
-from receipt.ingestion.base import ParseError, TransactionParser
+from receipt.ingestion.base import MAX_ROWS, ParseError, TransactionParser
 
 _PLAID_REQUIRED = {"date", "name", "amount"}
 _PLAID_OPTIONAL = {"category", "account_id", "pending"}
@@ -31,10 +31,10 @@ class PlaidParser(TransactionParser):
     def parse(self, source: Union[str, Path, IOBase]) -> pd.DataFrame:
         try:
             if isinstance(source, (str, Path)):
-                raw = pd.read_csv(source, encoding="utf-8-sig")
+                raw = pd.read_csv(source, encoding="utf-8-sig", nrows=MAX_ROWS + 1)
             else:
                 source.seek(0)
-                raw = pd.read_csv(source, encoding="utf-8-sig")
+                raw = pd.read_csv(source, encoding="utf-8-sig", nrows=MAX_ROWS + 1)
         except Exception as exc:
             raise ParseError(f"Plaid parser failed to read file: {exc}") from exc
 

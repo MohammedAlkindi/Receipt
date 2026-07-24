@@ -8,7 +8,7 @@ from typing import Union
 
 import pandas as pd
 
-from receipt.ingestion.base import ParseError, TransactionParser
+from receipt.ingestion.base import MAX_ROWS, ParseError, TransactionParser
 
 _CHASE_REQUIRED = {"Transaction Date", "Description", "Amount"}
 _CHASE_OPTIONAL = {"Post Date", "Category", "Type", "Memo"}
@@ -29,10 +29,10 @@ class ChaseParser(TransactionParser):
     def parse(self, source: Union[str, Path, IOBase]) -> pd.DataFrame:
         try:
             if isinstance(source, (str, Path)):
-                raw = pd.read_csv(source, encoding="utf-8-sig", thousands=",")
+                raw = pd.read_csv(source, encoding="utf-8-sig", thousands=",", nrows=MAX_ROWS + 1)
             else:
                 source.seek(0)
-                raw = pd.read_csv(source, encoding="utf-8-sig", thousands=",")
+                raw = pd.read_csv(source, encoding="utf-8-sig", thousands=",", nrows=MAX_ROWS + 1)
         except Exception as exc:
             raise ParseError(f"Chase parser failed to read file: {exc}") from exc
 
