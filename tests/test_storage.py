@@ -73,6 +73,25 @@ class TestReceiptStore:
         prev = store.get_previous_period(current_start)
         assert prev is not None
 
+    def test_get_previous_period_with_multiple_prior_runs(self, store, sample_df):
+        """H1 regression: two or more prior runs must not raise
+        MultipleResultsFound, and the most recent prior period wins."""
+        store.save_transactions(sample_df, "run1")  # transactions dated April 2026
+        store.save_analysis(
+            period_start=datetime(2026, 3, 1, tzinfo=timezone.utc),
+            period_end=datetime(2026, 3, 31, tzinfo=timezone.utc),
+            transaction_count=0,
+        )
+        store.save_analysis(
+            period_start=datetime(2026, 4, 1, tzinfo=timezone.utc),
+            period_end=datetime(2026, 4, 30, tzinfo=timezone.utc),
+            transaction_count=len(sample_df),
+        )
+        prev = store.get_previous_period(datetime(2026, 5, 1, tzinfo=timezone.utc))
+        assert prev is not None
+        # The April run (latest prior) was selected — its transactions exist.
+        assert len(prev) == len(sample_df)
+
     def test_get_analysis_run_by_id(self, store):
         run_id = store.save_analysis(
             period_start=datetime(2026, 4, 1, tzinfo=timezone.utc),

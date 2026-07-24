@@ -156,6 +156,7 @@ class ReceiptStore:
                 select(AnalysisRun)
                 .where(AnalysisRun.period_end < current_start)
                 .order_by(AnalysisRun.period_end.desc())
+                .limit(1)
             ).scalar_one_or_none()
             if not latest_run:
                 return None
