@@ -15,7 +15,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from receipt.analysis.narrator import NarrativeReport, Narrator, _LOW_SIGNAL_PHRASES as GENERIC_PHRASES
+from receipt.analysis.narrator import _LOW_SIGNAL_PHRASES as GENERIC_PHRASES
+from receipt.analysis.narrator import NarrativeReport, Narrator
 from receipt.pipeline.aggregator import compute_stats
 
 # ---------------------------------------------------------------------------

@@ -229,8 +229,9 @@ class TestDeduplicateWindowDays:
         assert len(result) == 2  # 1 Coffee + Gym
 
     def test_dedup_window_out_of_range_raises(self):
-        from receipt.pipeline.cleaner import deduplicate
         import pytest
+
+        from receipt.pipeline.cleaner import deduplicate
 
         with pytest.raises(ValueError, match="near_dup_window_days"):
             deduplicate(self._near_dup_df(), near_dup_window_days=8)
@@ -273,9 +274,10 @@ class TestDriftDetectorThreshold:
 
 class TestPipelineAuditLog:
     def test_audit_log_captures_stage_events(self):
+        from datetime import datetime, timezone
+
         from receipt.pipeline.audit import PipelineAuditLog
         from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
-        from datetime import datetime, timezone
 
         audit_log = PipelineAuditLog(
             run_id="test-run",
@@ -304,9 +306,10 @@ class TestPipelineAuditLog:
 
     def test_audit_log_to_dict_valid_json(self):
         import json
+        from datetime import datetime, timezone
+
         from receipt.pipeline.audit import PipelineAuditLog
         from receipt.pipeline.cleaner import normalize_descriptions
-        from datetime import datetime, timezone
 
         audit_log = PipelineAuditLog(
             run_id="r1",
@@ -337,8 +340,9 @@ class TestPipelineAuditLog:
         assert "metadata" in stage
 
     def test_audit_log_without_audit_log_arg_is_noop(self):
-        from receipt.pipeline.cleaner import normalize_descriptions
         import pandas as pd
+
+        from receipt.pipeline.cleaner import normalize_descriptions
 
         df = pd.DataFrame(
             {

@@ -11,8 +11,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
-logger = logging.getLogger(__name__)
-
 import anyio
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +18,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from receipt import configure_logging
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager

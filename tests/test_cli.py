@@ -404,6 +404,7 @@ class TestAPIResponseModels:
     def test_health_response_typed(self, mocker, tmp_path):
         """Task 10: /health returns JSON with status, db, version, narrative_service keys."""
         from fastapi.testclient import TestClient
+
         from receipt.api.server import app as fastapi_app
 
         mocker.patch(
@@ -427,6 +428,7 @@ class TestAPIResponseModels:
     def test_history_endpoint_returns_typed_list(self, mocker):
         """Task 10: /history returns list of AnalysisRunSummary-shaped dicts."""
         from fastapi.testclient import TestClient
+
         from receipt.api.server import app as fastapi_app
 
         mocker.patch(

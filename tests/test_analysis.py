@@ -151,7 +151,6 @@ class TestAnomalyDetector:
 
     def test_features_include_category_and_timing(self):
         """Task 7: _build_features returns 5 columns when category column present."""
-        import numpy as np
 
         rows = []
         for i in range(1, 10):
@@ -179,7 +178,6 @@ class TestAnomalyDetector:
 
     def test_features_without_category_defaults_to_minus_one(self):
         """Task 7: _build_features returns 5 columns even without category column."""
-        import numpy as np
 
         rows = [_tx(f"2026-04-{i:02d}", "Coffee", -5.0) for i in range(1, 8)]
         df = pd.DataFrame(rows)

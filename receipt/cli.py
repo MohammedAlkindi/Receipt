@@ -9,14 +9,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 
-logger = logging.getLogger(__name__)
-
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.theme import Theme
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="receipt",

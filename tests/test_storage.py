@@ -169,13 +169,15 @@ class TestNarrativeDeserialization:
 
     def test_get_analysis_run_handles_legacy_narrative(self, tmp_path):
         import json
-        from receipt.storage.store import ReceiptStore
         from datetime import datetime, timezone
+
+        from receipt.storage.store import ReceiptStore
 
         store = ReceiptStore(db_path=tmp_path / "legacy.db")
         # Manually save a run with a legacy narrative (no schema_version)
         legacy_narrative = json.dumps({"tldr": "old", "insights": [], "next_steps": "none"})
         from sqlalchemy.orm import Session
+
         from receipt.storage.models import AnalysisRun
         with Session(store._engine) as session:
             run = AnalysisRun(
