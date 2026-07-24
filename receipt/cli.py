@@ -122,7 +122,13 @@ def _run_pipeline(
         from receipt.pipeline.cleaner import deduplicate, normalize_dates, normalize_descriptions
 
         df = normalize_descriptions(df, audit_log=audit_log)
+        rows_before_dedup = len(df)
         df = deduplicate(df, near_dup_window_days=dedup_window, audit_log=audit_log)
+        if _verbose and len(df) < rows_before_dedup:
+            console.print(
+                f"[info]Removed {rows_before_dedup - len(df)} duplicate/near-duplicate "
+                f"transaction(s). Use --dedup-window 0 to disable near-duplicate removal.[/info]"
+            )
         df = normalize_dates(df, audit_log=audit_log)
 
         # --- Categorize ---

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
 from receipt.pipeline.audit import AuditLogger, PipelineAuditLog
+
+logger = logging.getLogger(__name__)
 
 # Patterns that represent noise appended to merchant names
 _NOISE_PATTERNS = [
@@ -101,8 +105,16 @@ def deduplicate(
             df = df[~near_dup_mask].drop(columns=["_key", "_prev_date", "_gap"])
             df = df.reset_index(drop=True)
 
+        removed = input_rows - len(df)
         al.output_rows = len(df)
-        al.metadata["duplicates_removed"] = input_rows - len(df)
+        al.metadata["duplicates_removed"] = removed
+        if removed:
+            logger.info(
+                "deduplicate: removed %d duplicate/near-duplicate row(s) (%d -> %d)",
+                removed,
+                input_rows,
+                len(df),
+            )
     return df
 
 

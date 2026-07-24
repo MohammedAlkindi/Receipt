@@ -59,6 +59,26 @@ class TestGenericCSVParser:
         df2 = GenericCSVParser().parse(io.StringIO(csv))
         assert df1["transaction_id"].iloc[0] == df2["transaction_id"].iloc[0]
 
+    def test_identical_rows_get_distinct_transaction_ids(self):
+        """C1 regression: two real purchases with the same date, description,
+        and amount must not share a transaction_id."""
+        csv = (
+            "date,description,amount\n"
+            "2026-01-01,Coffee,-4.50\n"
+            "2026-01-01,Coffee,-4.50\n"
+            "2026-01-01,Coffee,-4.50\n"
+        )
+        df = GenericCSVParser().parse(io.StringIO(csv))
+        assert len(df) == 3
+        assert df["transaction_id"].nunique() == 3
+
+    def test_identical_rows_ids_stable_across_parses(self):
+        """Occurrence-based IDs must stay deterministic file-to-file."""
+        csv = "date,description,amount\n2026-01-01,Coffee,-4.50\n2026-01-01,Coffee,-4.50\n"
+        df1 = GenericCSVParser().parse(io.StringIO(csv))
+        df2 = GenericCSVParser().parse(io.StringIO(csv))
+        assert df1["transaction_id"].tolist() == df2["transaction_id"].tolist()
+
     def test_amount_takes_precedence_over_debit_credit_logs_warning(self, caplog):
         """Task 4: CSV with both amount and debit/credit logs a warning."""
         import logging

@@ -48,10 +48,21 @@ class TransactionParser(ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def make_transaction_id(date: str, description: str, amount: float) -> str:
-        """Deterministic SHA-256-derived ID from the three key fields."""
-        payload = f"{date}|{description}|{amount:.4f}".encode()
-        return hashlib.sha256(payload).hexdigest()[:16]
+    def make_transaction_id(
+        date: str, description: str, amount: float, occurrence: int = 0
+    ) -> str:
+        """Deterministic SHA-256-derived ID from the three key fields.
+
+        *occurrence* is the 0-based count of earlier rows in the same file with
+        an identical (date, description, amount) tuple; without it, two real
+        same-day purchases of the same amount at the same merchant would hash
+        to the same ID and be dropped as duplicates. occurrence=0 preserves the
+        historical ID for non-colliding rows.
+        """
+        payload = f"{date}|{description}|{amount:.4f}"
+        if occurrence:
+            payload += f"|{occurrence}"
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
     @staticmethod
     def _coerce_to_utc(series: pd.Series) -> pd.Series:
@@ -68,12 +79,20 @@ class TransactionParser(ABC):
         df = df.copy()
         df["source"] = source_name
         df["raw_description"] = df.get("raw_description", df["description"])
-        df["transaction_id"] = df.apply(
-            lambda r: self.make_transaction_id(
-                str(r["date"]), str(r["raw_description"]), float(r["amount"])
-            ),
-            axis=1,
+        key = (
+            df["date"].astype(str)
+            + "|"
+            + df["raw_description"].astype(str)
+            + "|"
+            + df["amount"].astype(float).map(lambda a: f"{a:.4f}")
         )
+        occurrence = key.groupby(key).cumcount()
+        df["transaction_id"] = [
+            self.make_transaction_id(str(d), str(r), float(a), occurrence=int(o))
+            for d, r, a, o in zip(
+                df["date"], df["raw_description"], df["amount"], occurrence
+            )
+        ]
         df["date"] = self._coerce_to_utc(df["date"])
         df["amount"] = df["amount"].astype(float)
         df["description"] = df["description"].astype(str)

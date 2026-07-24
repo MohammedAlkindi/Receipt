@@ -68,6 +68,38 @@ class TestDeduplicate:
         result = deduplicate(df)
         assert any(result["description"] == "Gym")
 
+    def test_distinct_same_day_purchases_survive_window_zero(self):
+        """C1 regression: identical same-day purchases parsed from a real CSV
+        get distinct transaction_ids, so --dedup-window 0 truly keeps both."""
+        import io
+
+        from receipt.ingestion.csv_parser import GenericCSVParser
+
+        csv = (
+            "date,description,amount\n"
+            "2026-04-03,Starbucks,-5.75\n"
+            "2026-04-03,Starbucks,-5.75\n"
+        )
+        df = GenericCSVParser().parse(io.StringIO(csv))
+        result = deduplicate(df, near_dup_window_days=0)
+        assert len(result) == 2
+
+    def test_same_day_identical_removed_only_by_near_dup_window(self):
+        """With the window enabled (default), same-day identical rows are
+        still treated as near-duplicates (double-posting protection)."""
+        import io
+
+        from receipt.ingestion.csv_parser import GenericCSVParser
+
+        csv = (
+            "date,description,amount\n"
+            "2026-04-03,Starbucks,-5.75\n"
+            "2026-04-03,Starbucks,-5.75\n"
+        )
+        df = GenericCSVParser().parse(io.StringIO(csv))
+        result = deduplicate(df, near_dup_window_days=2)
+        assert len(result) == 1
+
 
 class TestNormalizeDates:
     def test_adds_temporal_columns(self, sample_df):
