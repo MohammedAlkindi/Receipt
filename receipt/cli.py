@@ -551,3 +551,7 @@ def serve(
         )
     console.print(f"[info]Starting receipt API on http://{resolved_host}:{resolved_port}[/info]")
     uvicorn.run("receipt.api.server:app", host=resolved_host, port=resolved_port, reload=False)
+
+
+if __name__ == "__main__":
+    app()

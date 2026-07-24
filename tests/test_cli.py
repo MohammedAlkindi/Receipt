@@ -525,6 +525,28 @@ class TestAPISecurity:
 # serve
 # ---------------------------------------------------------------------------
 
+class TestModuleEntryPoint:
+    def test_python_m_receipt_cli_runs(self):
+        """M6 regression: `python -m receipt.cli` must execute the app, not
+        silently no-op (the README documents it as a fallback invocation)."""
+        import os
+        import subprocess
+        import sys
+
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        result = subprocess.run(
+            [sys.executable, "-m", "receipt.cli", "--help"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=60,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip(), "python -m receipt.cli produced no output"
+        assert "analyze" in result.stdout
+
+
 class TestServe:
     def test_serve_starts_with_uvicorn(self, mocker):
         uvicorn_mock = mocker.MagicMock()
