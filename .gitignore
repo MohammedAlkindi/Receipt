@@ -54,3 +54,6 @@ Thumbs.db
 # Project-specific
 ~/.receipt/
 data/uploads/
+
+.vercel
+.env*
