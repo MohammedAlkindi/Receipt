@@ -420,7 +420,6 @@ The Anthropic API call has a 30-second timeout. If your network is slow or the A
 
 - [ ] **PyPI release** — package is install-from-source only; publishing to PyPI will enable `pip install receipt` without cloning.
 - [ ] **Hosted demo** — a zero-install web interface where anyone can upload a CSV and see an analysis without running a local server.
-- [ ] **Database migration system** — schema changes currently require deleting `~/.receipt/receipt.db`; Alembic migrations would make upgrades non-destructive.
 - [ ] **Multi-user API support** — the FastAPI server has no authentication or user isolation; supporting multiple users requires API key auth and per-user database partitioning.
 
 ---
@@ -431,10 +430,9 @@ The Anthropic API call has a 30-second timeout. If your network is slow or the A
 - **sentence-transformers requires ~80 MB download on first run** — use `SemanticCategorizer(use_embeddings=False)` or `receipt demo` to skip.
 - **HDBSCAN clusters are most meaningful on 200+ transactions** — on smaller datasets the keyword fallback produces better category labels.
 - **FastAPI server is single-process** — for concurrent use, run with multiple workers: `uvicorn receipt.api.server:app --workers 4` (requires `gunicorn` as process manager on Linux/macOS).
-- **No database migration system** — schema changes require deleting `~/.receipt/receipt.db` and re-running analyses.
 
 ---
 
 ## License
 
-MIT — see `pyproject.toml`.
+MIT — see [`LICENSE`](LICENSE).
