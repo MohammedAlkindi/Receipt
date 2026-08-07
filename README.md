@@ -1,9 +1,9 @@
 # receipt
 
-[![CI](https://github.com/alkindymhmd/receipt/actions/workflows/ci.yml/badge.svg)](https://github.com/alkindymhmd/receipt/actions/workflows/ci.yml)
+[![CI](https://github.com/MohammedAlkindi/Receipt/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammedAlkindi/Receipt/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%20|%203.12-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://opensource.org/licenses/MIT)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](https://github.com/alkindymhmd/receipt/pulls)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](https://github.com/MohammedAlkindi/Receipt/pulls)
 
 Your bank app tells you how much you spent. **receipt** tells you what actually happened — semantic clustering, seven behavioral detectors, and an AI narrative that thinks like a sharp friend with an accounting degree: specific dollar amounts, named merchants, non-obvious patterns, and none of the generic budget-app moralizing.
 
@@ -65,8 +65,8 @@ CSV file / base64 payload
 
 ```bash
 # Clone and install in editable mode
-git clone https://github.com/alkindymhmd/receipt
-cd receipt
+git clone https://github.com/MohammedAlkindi/Receipt
+cd Receipt
 pip install -e .
 
 # For development tools (pytest, ruff, mypy)

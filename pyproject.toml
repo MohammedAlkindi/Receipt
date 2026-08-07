@@ -49,8 +49,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/alkindymhmd/receipt"
-Repository = "https://github.com/alkindymhmd/receipt"
+Homepage = "https://github.com/MohammedAlkindi/Receipt"
+Repository = "https://github.com/MohammedAlkindi/Receipt"
 
 [project.scripts]
 receipt = "receipt.cli:app"
