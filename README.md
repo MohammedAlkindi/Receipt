@@ -92,7 +92,7 @@ receipt uses [Alembic](https://alembic.sqlalchemy.org/) to manage schema migrati
 # After first install
 alembic upgrade head
 
-# After upgrading receipt (e.g. via pip install --upgrade receipt)
+# After pulling a newer revision
 alembic upgrade head
 ```
 
@@ -418,7 +418,7 @@ The Anthropic API call has a 30-second timeout. If your network is slow or the A
 
 ## Roadmap
 
-- [ ] **PyPI release** — package is install-from-source only; publishing to PyPI will enable `pip install receipt` without cloning.
+- [ ] **PyPI release** — install-from-source only for now. The distribution name `receipt` is already taken on PyPI by an unrelated project, so publishing needs a different name first; `pip install receipt` today installs someone else's package, not this one.
 - [ ] **Hosted demo** — a zero-install web interface where anyone can upload a CSV and see an analysis without running a local server.
 - [ ] **Multi-user API support** — the FastAPI server has no authentication or user isolation; supporting multiple users requires API key auth and per-user database partitioning.
 
