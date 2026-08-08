@@ -81,3 +81,12 @@ python_version = "3.11"
 ignore_missing_imports = true
 warn_return_any = false
 warn_unused_ignores = true
+
+# numpy >= 2.5 ships stubs written with PEP 695 `type` statements, which mypy
+# refuses to parse while targeting 3.11 — it fails with a syntax error before it
+# checks any of our code. We only consume numpy through pandas and scikit-learn,
+# so skip its stubs rather than raise python_version above what we support.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
